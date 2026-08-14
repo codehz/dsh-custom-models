@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { Button, Input, Pill } from "@deepseek-ai/dsh-client-ui-primitives";
+import { Pill } from "@deepseek-ai/dsh-client-ui-primitives";
 import type { TranslateNS } from "@deepseek-ai/dsh-client-locale/client";
 import { validationKey } from "./locales.js";
 import {
@@ -23,29 +23,54 @@ interface Props {
   index: number;
   api: ApiKind;
   disabled: boolean;
+  expanded: boolean;
   errors: Record<string, string>;
   t: TranslateNS<"settings.custom-models">;
   onChange: (model: ModelDraft) => void;
+  onToggle: () => void;
   onRemove: () => void;
 }
 
 function Field({
-  label, error, children, wide,
+  label, error, children,
 }: {
   label: string;
   error?: string | undefined;
   children: React.ReactNode;
-  wide?: boolean;
 }) {
-  return <label className={"cm-field" + (wide ? " cm-wide" : "")}>
-    <span>{label}</span>{children}{error ? <span className="cm-error">{error}</span> : null}
+  return <label className="cm-model-field">
+    <span className="cm-model-field-label">{label}</span>
+    {children}
+    {error ? <span className="cm-error">{error}</span> : null}
   </label>;
 }
 
+function IconChevron({ open }: { open: boolean }) {
+  return <svg
+    width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden
+    style={{ transform: open ? "rotate(90deg)" : undefined, transition: "transform 120ms ease" }}
+  >
+    <path d="M6 3.5L10.5 8L6 12.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>;
+}
+
+function IconTrash() {
+  return <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden>
+    <path
+      d="M2.5 4h11M6.5 4V2.5h3V4M4 4l.7 9a1 1 0 001 .9h4.6a1 1 0 001-.9L12 4M6.5 6.8v4.4M9.5 6.8v4.4"
+      stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round"
+    />
+  </svg>;
+}
+
 export function ModelEditor({
-  model, index, api, disabled, errors, t, onChange, onRemove,
+  model, index, api, disabled, expanded, errors, t, onChange, onToggle, onRemove,
 }: Props) {
   const path = "models." + index;
+  const hasErrors = Object.keys(errors).some((key) => key === path || key.startsWith(path + "."));
+  useEffect(() => {
+    if (hasErrors && !expanded) onToggle();
+  }, [hasErrors]);
   const message = (suffix: string) => {
     const key = validationKey(errors[path + suffix]);
     return key === undefined ? undefined : t(key);
@@ -65,38 +90,88 @@ export function ModelEditor({
   useEffect(() => {
     if (overrideErrors.length > 0) setOverrideOpen(true);
   }, [overrideErrors.length]);
-  return <fieldset className="cm-card" disabled={disabled}>
-    <legend>{t("models")} {index + 1}</legend>
-    <div className="cm-card-head">
-      <strong>{model.id || "—"}</strong>
-      <Button size="sm" disabled={disabled} onClick={onRemove}>{t("removeModel")}</Button>
+  return <div className="cm-model-entry">
+    <div className="cm-model-row">
+      <input
+        className="cm-input"
+        value={model.id}
+        placeholder={t("modelId")}
+        aria-label={t("modelId") + " " + (index + 1)}
+        disabled={disabled}
+        onChange={(event) => update((draft) => { draft.id = event.target.value; })}
+      />
+      <input
+        className="cm-input"
+        value={model.name}
+        placeholder={t("modelNamePlaceholder")}
+        aria-label={t("modelName") + " " + (index + 1)}
+        disabled={disabled}
+        onChange={(event) => update((draft) => { draft.name = event.target.value; })}
+      />
+      <button
+        type="button"
+        className="cm-icon"
+        aria-label={t("modelAdvanced") + " " + (index + 1)}
+        aria-expanded={expanded}
+        title={t("modelAdvanced")}
+        onClick={onToggle}
+      >
+        <IconChevron open={expanded} />
+      </button>
+      <button
+        type="button"
+        className="cm-icon cm-icon-danger"
+        aria-label={t("removeModel") + " " + (index + 1)}
+        title={t("removeModel")}
+        disabled={disabled}
+        onClick={onRemove}
+      >
+        <IconTrash />
+      </button>
     </div>
-    <div className="cm-grid">
-      <Field label={t("modelId")} error={message(".id")}>
-        <Input value={model.id} onChange={(event) => update((draft) => { draft.id = event.target.value; })}/>
-      </Field>
-      <Field label={t("modelName")}>
-        <Input value={model.name} onChange={(event) => update((draft) => { draft.name = event.target.value; })}/>
-      </Field>
+    {expanded ? <div className="cm-model-advanced">
       <Field label={t("contextWindow")} error={message(".contextWindow")}>
-        <Input inputMode="numeric" value={model.contextWindow} onChange={(event) => update((draft) => { draft.contextWindow = event.target.value; })}/>
+        <input
+          className="cm-input"
+          inputMode="numeric"
+          value={model.contextWindow}
+          placeholder="256K"
+          aria-label={t("contextWindow") + " " + (index + 1)}
+          disabled={disabled}
+          onChange={(event) => update((draft) => { draft.contextWindow = event.target.value; })}
+        />
       </Field>
       <Field label={t("maxTokens")} error={message(".maxTokens")}>
-        <Input inputMode="numeric" value={model.maxTokens} onChange={(event) => update((draft) => { draft.maxTokens = event.target.value; })}/>
+        <input
+          className="cm-input"
+          inputMode="numeric"
+          value={model.maxTokens}
+          placeholder="32K"
+          aria-label={t("maxTokens") + " " + (index + 1)}
+          disabled={disabled}
+          onChange={(event) => update((draft) => { draft.maxTokens = event.target.value; })}
+        />
       </Field>
-      <div className="cm-wide cm-row">
-        <label className="cm-check"><input type="checkbox" checked={model.input.text} onChange={(event) => update((draft) => { draft.input.text = event.target.checked; })}/>{t("text")}</label>
-        <label className="cm-check"><input type="checkbox" checked={model.input.image} onChange={(event) => update((draft) => { draft.input.image = event.target.checked; })}/>{t("image")}</label>
+      <div className="cm-model-extra cm-row-checks">
+        <label className="cm-check">
+          <input type="checkbox" checked={model.input.text} disabled={disabled} onChange={(event) => update((draft) => { draft.input.text = event.target.checked; })} />
+          {t("text")}
+        </label>
+        <label className="cm-check">
+          <input type="checkbox" checked={model.input.image} disabled={disabled} onChange={(event) => update((draft) => { draft.input.image = event.target.checked; })} />
+          {t("image")}
+        </label>
         {message(".input") ? <span className="cm-error">{message(".input")}</span> : null}
       </div>
-      <label className="cm-wide cm-check">
-        <input type="checkbox" checked={efforts !== false} onChange={(event) => update((draft) => {
+      <label className="cm-model-extra cm-check">
+        <input type="checkbox" checked={efforts !== false} disabled={disabled} onChange={(event) => update((draft) => {
           draft.reasoningEfforts = event.target.checked ? {} : false;
           if (!event.target.checked) draft.defaultReasoningEffort = "";
-        })}/>{t("reasoning")}
+        })} />
+        {t("reasoning")}
       </label>
       {efforts !== false ? <>
-        <div className="cm-wide cm-effort-block">
+        <div className="cm-model-extra cm-effort-block">
           <div className="cm-effort-label">{t("efforts")}</div>
           <div className="cm-effort-pills" role="group" aria-label={t("efforts")}>
             {EFFORTS.map((effort) => {
@@ -129,21 +204,26 @@ export function ModelEditor({
           {message(".reasoningEfforts") ? <p className="cm-error">{message(".reasoningEfforts")}</p> : null}
         </div>
         <Field label={t("defaultEffort")} error={message(".defaultReasoningEffort")}>
-          <select value={model.defaultReasoningEffort} onChange={(event) => update((draft) => {
-            draft.defaultReasoningEffort = event.target.value as Effort | "";
-          })}>
+          <select
+            className="cm-input cm-select"
+            value={model.defaultReasoningEffort}
+            disabled={disabled}
+            onChange={(event) => update((draft) => {
+              draft.defaultReasoningEffort = event.target.value as Effort | "";
+            })}
+          >
             <option value="">{t("inherit")}</option>
             {EFFORTS.filter((effort) => Object.hasOwn(efforts, effort)).map((effort) =>
               <option key={effort} value={effort}>{effort}</option>)}
           </select>
         </Field>
-        {Object.keys(efforts).length > 0 ? <div className="cm-wide cm-override">
+        {Object.keys(efforts).length > 0 ? <div className="cm-model-extra cm-override">
           <button
             type="button"
             className="cm-override-toggle"
             aria-expanded={showOverrides}
             disabled={disabled}
-            onClick={() => setOverrideOpen((open) => !open)}
+            onClick={() => setOverrideOpen((value) => !value)}
           >
             <span aria-hidden="true">{showOverrides ? "▾" : "▸"}</span>
             {t("overrideWires")}
@@ -159,10 +239,12 @@ export function ModelEditor({
                 label={effort === "off" ? t("offWire") : t("wireFor").replace("{effort}", effort)}
                 error={error}
               >
-                <Input
+                <input
+                  className="cm-input"
                   aria-label={effort + " " + t("wireValue")}
                   placeholder={effort === "off" ? t("offOmit") : String(defaultWire(effort))}
                   value={value ?? ""}
+                  disabled={disabled}
                   onChange={(event) => update((draft) => {
                     if (draft.reasoningEfforts === false) return;
                     draft.reasoningEfforts = setEffortWire(draft.reasoningEfforts, effort, event.target.value);
@@ -175,21 +257,33 @@ export function ModelEditor({
       </> : null}
       {api === "openai-completions" ? <>
         <Field label={t("thinkingFormat")}>
-          <select value={model.compat.thinkingFormat} onChange={(event) => update((draft) => {
-            draft.compat.thinkingFormat = event.target.value as ModelDraft["compat"]["thinkingFormat"];
-          })}>
+          <select
+            className="cm-input cm-select"
+            value={model.compat.thinkingFormat}
+            disabled={disabled}
+            onChange={(event) => update((draft) => {
+              draft.compat.thinkingFormat = event.target.value as ModelDraft["compat"]["thinkingFormat"];
+            })}
+          >
             <option value="">{t("inherit")}</option>
             {THINKING_FORMATS.map((format) => <option key={format} value={format}>{format}</option>)}
           </select>
         </Field>
         <Field label={t("supportsReasoningEffort")}>
-          <select value={model.compat.supportsReasoningEffort} onChange={(event) => update((draft) => {
-            draft.compat.supportsReasoningEffort = event.target.value as ModelDraft["compat"]["supportsReasoningEffort"];
-          })}>
-            <option value="">{t("inherit")}</option><option value="true">true</option><option value="false">false</option>
+          <select
+            className="cm-input cm-select"
+            value={model.compat.supportsReasoningEffort}
+            disabled={disabled}
+            onChange={(event) => update((draft) => {
+              draft.compat.supportsReasoningEffort = event.target.value as ModelDraft["compat"]["supportsReasoningEffort"];
+            })}
+          >
+            <option value="">{t("inherit")}</option>
+            <option value="true">true</option>
+            <option value="false">false</option>
           </select>
         </Field>
       </> : null}
-    </div>
-  </fieldset>;
+    </div> : null}
+  </div>;
 }

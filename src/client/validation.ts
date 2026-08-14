@@ -1,3 +1,4 @@
+import { isPositiveCapacity } from "./capacity.js";
 import { normalizeEffortMap } from "./reasoning.js";
 import type { Effort, ProviderDraft, ValidationResult } from "./types.js";
 
@@ -42,8 +43,8 @@ export function validateProviderDraft(draft: ProviderDraft): ValidationResult {
     if (id === "") errors[path + ".id"] = "required";
     else if (ids.has(id)) errors[path + ".id"] = "duplicate";
     else ids.add(id);
-    if (!positiveInteger(model.contextWindow)) errors[path + ".contextWindow"] = "positive";
-    if (!positiveInteger(model.maxTokens)) errors[path + ".maxTokens"] = "positive";
+    if (!isPositiveCapacity(model.contextWindow)) errors[path + ".contextWindow"] = "capacity";
+    if (!isPositiveCapacity(model.maxTokens)) errors[path + ".maxTokens"] = "capacity";
     if (!model.input.text && !model.input.image) errors[path + ".input"] = "modality";
     if (model.reasoningEfforts !== false) {
       const enabled = Object.keys(model.reasoningEfforts);

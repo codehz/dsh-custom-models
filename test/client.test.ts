@@ -7,6 +7,7 @@ import {
   isCustomWire,
   normalizeEffortMap,
 } from "../src/client/reasoning.js";
+import { formatCapacity, parseCapacity } from "../src/client/capacity.js";
 import { emptyProvider } from "../src/client/types.js";
 import { deriveKeyRef, validateProviderDraft } from "../src/client/validation.js";
 
@@ -101,6 +102,32 @@ describe("client provider editor", () => {
     ]);
     expect(efforts).toEqual({ off: null, high: "high", max: "ultra" });
     expect(customEffortCount(efforts)).toBe(1);
+  });
+
+  test("accepts K/M capacity spellings and formats them back", () => {
+    expect(parseCapacity("1M")).toBe(1_000_000);
+    expect(parseCapacity("256K")).toBe(256_000);
+    expect(formatCapacity(1_000_000)).toBe("1M");
+    expect(formatCapacity(256_000)).toBe("256K");
+
+    const draft = emptyProvider();
+    draft.route = "acme";
+    draft.baseURL = "https://gateway.example/v1";
+    draft.models[0]!.id = "plain";
+    draft.models[0]!.contextWindow = "1M";
+    draft.models[0]!.maxTokens = "256K";
+
+    expect(validateProviderDraft(draft)).toEqual({ valid: true, errors: {} });
+    expect(providerToValue(draft).models).toEqual([
+      expect.objectContaining({ contextWindow: 1_000_000, maxTokens: 256_000 }),
+    ]);
+    expect(providerFromValue("acme", {
+      baseURL: "https://gateway.example/v1",
+      models: [{ id: "plain", contextWindow: 1_000_000, maxTokens: 256_000 }],
+    }).models[0]).toEqual(expect.objectContaining({
+      contextWindow: "1M",
+      maxTokens: "256K",
+    }));
   });
 
   test("treats schema-materialized empty input as inherited text", () => {

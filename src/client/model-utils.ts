@@ -1,3 +1,4 @@
+import { capacityText, numericCapacity } from "./capacity.js";
 import { normalizeEffortMap } from "./reasoning.js";
 import {
   EFFORTS,
@@ -67,8 +68,8 @@ function modelFromValue(value: unknown): ModelDraft {
   return {
     id: text(source.id),
     name: text(source.name),
-    contextWindow: numericText(source.contextWindow),
-    maxTokens: numericText(source.maxTokens),
+    contextWindow: capacityText(source.contextWindow),
+    maxTokens: capacityText(source.maxTokens),
     input: {
       text: input.length === 0 || input.includes("text"),
       image: input.includes("image"),
@@ -114,8 +115,8 @@ export function providerFromValue(route: string, value: unknown): ProviderDraft 
 }
 
 function modelToValue(model: ModelDraft): Record<string, unknown> {
-  const contextWindow = numeric(model.contextWindow);
-  const maxTokens = numeric(model.maxTokens);
+  const contextWindow = numericCapacity(model.contextWindow);
+  const maxTokens = numericCapacity(model.maxTokens);
   const compat = compatToValue(model.compat);
   return {
     id: model.id.trim(),
