@@ -1,0 +1,6 @@
+# dsh-custom-models is inert until the profile patch supplies providers.
+- insert:
+    - id: custom-models
+      name: 'dsh-custom-models'
+      config:
+        providers: {}
