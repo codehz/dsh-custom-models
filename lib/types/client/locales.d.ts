@@ -36,9 +36,16 @@ export declare const zh: {
     readonly text: "文本";
     readonly image: "图像";
     readonly reasoning: "启用推理等级";
-    readonly efforts: "推理强度映射";
-    readonly wireValue: "供应商 wire 值";
-    readonly offOmit: "留空表示 off 时不发送 reasoning_effort";
+    readonly efforts: "推理等级";
+    readonly effortHint: "点选该模型支持的等级即可，默认按同名发送。";
+    readonly wireValue: "供应商取值";
+    readonly offOmit: "留空表示 off 时不发送推理参数";
+    readonly overrideWires: "覆盖供应商取值";
+    readonly overrideHint: "默认按等级同名发送。只有供应商用不同拼写时才需要改这里。";
+    readonly overrideCount: "已覆盖 {count} 项";
+    readonly customWireHint: "{effort} 将发送为 {value}";
+    readonly offWire: "off 的发送值";
+    readonly wireFor: "{effort} 的发送值";
     readonly defaultEffort: "默认强度";
     readonly modelCompat: "模型兼容选项";
     readonly active: "已启用";
@@ -70,7 +77,7 @@ export declare const zh: {
     readonly validationDuplicate: "不可重复";
     readonly validationModality: "至少选择一种输入模态";
     readonly validationEffort: "至少启用一个 off 之外的推理等级";
-    readonly validationWire: "需要非空 wire 值";
+    readonly validationWire: "需要非空取值";
     readonly validationDefault: "默认等级必须是已启用等级";
     readonly validationCredential: "凭据引用必须是合法环境变量名";
 };

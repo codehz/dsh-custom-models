@@ -26,7 +26,7 @@ dsh plugin --profile web add /home/codehz/Projects/dsh-custom-models
 
 - 新增、编辑、删除 provider 与模型；
 - 配置 endpoint、协议、容量、输入模态、兼容选项与重试策略；
-- 为每个模型配置推理等级、供应商 wire 值和默认推理等级；
+- 为每个模型点选推理等级、按需覆盖供应商取值，并设置默认推理等级；
 - 将 API Key 写入 DSH credentials。浏览器只读取“已配置/来源/可写”状态，永远不会回读或显示密钥值。
 
 页面修改存放在 **$DSH_HOME/settings.yaml** 的 **custom-models** namespace，并实时应用到后续调用。插件 entry 中的 config 仍然作为 base 层：设置页只保存用户覆盖；对 base provider 执行“重置”会重新继承 entry 配置。
@@ -76,7 +76,7 @@ dsh plugin --profile web add /home/codehz/Projects/dsh-custom-models
 
 键是 DSH/pi-ai 的标准等级：**off、minimal、low、medium、high、xhigh、max**。
 
-值是第三方供应商实际接收的字符串。只有 **off** 可以为 **null**，代表不发送推理参数。非推理模型请设为 **false**。
+值是第三方供应商实际接收的字符串。设置页默认按等级同名发送（`high → "high"`）；只有供应商拼写不同时才需要覆盖。只有 **off** 可以为 **null**，代表不发送推理参数。非推理模型请设为 **false**。
 
 ### defaultReasoningEffort
 

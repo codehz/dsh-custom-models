@@ -1,4 +1,5 @@
-import type { ProviderDraft, ValidationResult } from "./types.js";
+import { normalizeEffortMap } from "./reasoning.js";
+import type { Effort, ProviderDraft, ValidationResult } from "./types.js";
 
 export function deriveKeyRef(route: string, explicit?: string): string {
   const value = explicit?.trim();
@@ -48,8 +49,9 @@ export function validateProviderDraft(draft: ProviderDraft): ValidationResult {
       const enabled = Object.keys(model.reasoningEfforts);
       const thinking = enabled.filter((effort) => effort !== "off");
       if (thinking.length === 0) errors[path + ".reasoningEfforts"] = "effortRequired";
+      const normalized = normalizeEffortMap(model.reasoningEfforts);
       for (const effort of thinking) {
-        const wire = model.reasoningEfforts[effort as keyof typeof model.reasoningEfforts];
+        const wire = normalized[effort as Effort];
         if (typeof wire !== "string" || wire.trim() === "") {
           errors[path + ".reasoningEfforts." + effort] = "wireRequired";
         }

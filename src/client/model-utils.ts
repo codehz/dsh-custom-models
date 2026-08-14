@@ -1,3 +1,4 @@
+import { normalizeEffortMap } from "./reasoning.js";
 import {
   EFFORTS,
   THINKING_FORMATS,
@@ -125,7 +126,9 @@ function modelToValue(model: ModelDraft): Record<string, unknown> {
       ...(model.input.text ? ["text"] : []),
       ...(model.input.image ? ["image"] : []),
     ],
-    reasoningEfforts: model.reasoningEfforts,
+    reasoningEfforts: model.reasoningEfforts === false
+      ? false
+      : normalizeEffortMap(model.reasoningEfforts),
     ...(model.defaultReasoningEffort === ""
       ? {}
       : { defaultReasoningEffort: model.defaultReasoningEffort }),

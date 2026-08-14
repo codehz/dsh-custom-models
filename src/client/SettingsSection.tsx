@@ -323,7 +323,7 @@ export function SettingsSection({ api, t }: Props) {
         </div>
         <h3>{t("models")}</h3>
         {draft.models.map((model, index) => <ModelEditor
-          key={index}
+          key={(selected ?? "new") + ":" + index}
           model={model}
           index={index}
           api={draft.api}
