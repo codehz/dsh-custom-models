@@ -1,11 +1,14 @@
 import type { Context } from "@deepseek-ai/cordis";
+import z from "@deepseek-ai/schemastery";
 import type {} from "@deepseek-ai/dsh-attachment";
 import { credentialRef } from "@deepseek-ai/dsh-credentials";
 import { launchEnvironmentOf } from "@deepseek-ai/dsh-launch-environment";
+import { settingsNamespace } from "@deepseek-ai/dsh-settings";
 import {
   assertUsableApiKey,
   LlmError,
   resolveRetryPolicy,
+  RetryPolicySchema,
   type LlmResolvedModelInfo,
   type ReasoningEffortId,
   type RetryPolicyConfig,
@@ -14,6 +17,7 @@ import {
   PiAiAdapter,
   type PiAiAdapterOptions,
   type PiAiCompatProfile,
+  type PiAiThinkingFormat,
   type ResolvedPiAiProviderProfile,
 } from "@deepseek-ai/dsh-llm-pi-ai";
 import {
@@ -64,6 +68,52 @@ export interface CustomProviderProfile {
 export interface Config {
   providers?: Record<string, CustomProviderProfile>;
 }
+
+const THINKING_FORMATS = [
+  "openai",
+  "deepseek",
+  "openrouter",
+  "together",
+  "zai",
+  "qwen",
+  "string-thinking",
+  "ant-ling",
+] as const satisfies readonly PiAiThinkingFormat[];
+
+const compatSchema = z.object({
+  thinkingFormat: z.union(THINKING_FORMATS),
+  supportsReasoningEffort: z.boolean(),
+});
+const reasoningEffortsSchema = z.dict(
+  z.union([z.string(), z.const(null)]),
+  z.union(THINKING_LEVELS),
+);
+const modelSchema = z.object({
+  id: z.string().required(),
+  name: z.string(),
+  contextWindow: z.number().step(1).min(1),
+  maxTokens: z.number().step(1).min(1),
+  input: z.array(z.union(["text", "image"] as const)),
+  reasoningEfforts: z.union([z.const(false), reasoningEffortsSchema]),
+  defaultReasoningEffort: z.union(THINKING_LEVELS),
+  compat: compatSchema,
+});
+const providerSchema = z.object({
+  displayName: z.string(),
+  apiKeyEnv: z.string().role("credential-ref"),
+  api: z.union(SUPPORTED_APIS),
+  baseURL: z.string(),
+  headers: z.dict(z.string()),
+  compat: compatSchema,
+  streamIdleTimeoutMs: z.number().step(1).min(1),
+  retryPolicy: RetryPolicySchema,
+  models: z.array(modelSchema),
+});
+
+/** Runtime schema used by Cordis and the DSH settings surface. */
+export const Config = z.object({
+  providers: z.dict(providerSchema).default({}),
+}) as unknown as z<Config>;
 
 export interface NormalizedConfig {
   profiles: ReadonlyMap<string, ResolvedPiAiProviderProfile>;
@@ -163,6 +213,13 @@ function zeroCost(): Model<Api>["cost"] {
   return { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
 }
 
+function declaredCompat(compat: PiAiCompatProfile | undefined): PiAiCompatProfile | undefined {
+  if (compat === undefined) return undefined;
+  return compat.thinkingFormat === undefined && compat.supportsReasoningEffort === undefined
+    ? undefined
+    : compat;
+}
+
 /** Validate configuration and construct public pi-ai providers without private DSH imports. */
 export function normalizeConfig(config: Config = {}): NormalizedConfig {
   if (!isRecord(config)) throw new Error("dsh-custom-models: config must be an object");
@@ -198,6 +255,7 @@ export function normalizeConfig(config: Config = {}): NormalizedConfig {
     }
 
     const displayName = profile.displayName ?? provider;
+    const providerCompat = declaredCompat(profile.compat);
     const routeDefaults = new Map<string, ModelThinkingLevel>();
     const configuredMaxTokens = new Map<string, number>();
     const seen = new Set<string>();
@@ -227,11 +285,12 @@ export function normalizeConfig(config: Config = {}): NormalizedConfig {
       );
       if (entry.maxTokens !== undefined) configuredMaxTokens.set(entry.id, maxTokens);
 
+      const input = entry.input !== undefined && entry.input.length > 0
+        ? entry.input
+        : undefined;
       if (
-        entry.input !== undefined &&
-        (!Array.isArray(entry.input) ||
-          entry.input.length === 0 ||
-          entry.input.some((modality) => modality !== "text" && modality !== "image"))
+        input !== undefined &&
+        input.some((modality) => modality !== "text" && modality !== "image")
       ) {
         throw new Error(
           "dsh-custom-models: model '" + provider + "/" + entry.id +
@@ -241,8 +300,28 @@ export function normalizeConfig(config: Config = {}): NormalizedConfig {
 
       const reasoning = resolveReasoning(provider, entry.id, entry.reasoningEfforts);
       const defaultEffort = readDefault(provider, entry.id, entry.defaultReasoningEffort);
-      if (defaultEffort !== undefined) routeDefaults.set(entry.id, defaultEffort);
-      if (entry.compat !== undefined && api !== "openai-completions") {
+      if (defaultEffort !== undefined) {
+        if (
+          entry.reasoningEfforts === undefined ||
+          entry.reasoningEfforts === false ||
+          entry.reasoningEfforts[defaultEffort] === undefined
+        ) {
+          const configuredEfforts = entry.reasoningEfforts === false
+            ? undefined
+            : entry.reasoningEfforts;
+          const supported = configuredEfforts === undefined
+            ? "none"
+            : THINKING_LEVELS.filter((level) => configuredEfforts[level] !== undefined).join(", ");
+          throw new Error(
+            "dsh-custom-models: provider route '" + provider + "' model '" + entry.id +
+            "' sets defaultReasoningEffort '" + defaultEffort +
+            "', but its supported efforts are: " + supported,
+          );
+        }
+        routeDefaults.set(entry.id, defaultEffort);
+      }
+      const modelCompat = declaredCompat(entry.compat);
+      if (modelCompat !== undefined && api !== "openai-completions") {
         throw new Error(
           "dsh-custom-models: model '" + provider + "/" + entry.id +
           "' compat is only valid for openai-completions",
@@ -255,13 +334,13 @@ export function normalizeConfig(config: Config = {}): NormalizedConfig {
         api,
         provider,
         baseUrl: profile.baseURL,
-        input: entry.input ?? ["text"],
+        input: input ?? ["text"],
         cost: zeroCost(),
         contextWindow,
         maxTokens,
         ...reasoning,
         ...api === "openai-completions"
-          ? { compat: { ...profile.compat, ...entry.compat } }
+          ? { compat: { ...providerCompat, ...modelCompat } }
           : {},
       } as Model<Api>;
     });
@@ -297,7 +376,7 @@ export function normalizeConfig(config: Config = {}): NormalizedConfig {
       configuredMaxTokens,
       ...(apiKeyEnv === undefined ? {} : { apiKeyEnv }),
       ...(profile.headers === undefined ? {} : { headers: profile.headers }),
-      ...(profile.compat === undefined ? {} : { compat: profile.compat }),
+      ...(providerCompat === undefined ? {} : { compat: providerCompat }),
     });
     if (routeDefaults.size > 0) defaults.set(provider, routeDefaults);
   }
@@ -307,11 +386,11 @@ export function normalizeConfig(config: Config = {}): NormalizedConfig {
 
 /** Official pi-ai transport with exact-model defaults layered into metadata. */
 export class PerModelReasoningPiAiAdapter extends PiAiAdapter {
-  readonly #defaults: ModelDefaults;
+  readonly #defaults: () => ModelDefaults;
 
-  constructor(options: PiAiAdapterOptions, defaults: ModelDefaults) {
+  constructor(options: PiAiAdapterOptions, defaults: ModelDefaults | (() => ModelDefaults)) {
     super(options);
-    this.#defaults = defaults;
+    this.#defaults = typeof defaults === "function" ? defaults : () => defaults;
   }
 
   override async resolveModel(
@@ -320,7 +399,7 @@ export class PerModelReasoningPiAiAdapter extends PiAiAdapter {
     signal?: AbortSignal,
   ): Promise<LlmResolvedModelInfo> {
     const resolved = await super.resolveModel(provider, model, signal);
-    const configured = this.#defaults.get(provider)?.get(model);
+    const configured = this.#defaults().get(provider)?.get(model);
     if (configured === undefined) return resolved;
     const reasoning = resolved.reasoning;
     if (reasoning === undefined || !reasoning.efforts.some((effort) => effort.id === configured)) {
@@ -339,21 +418,15 @@ export class PerModelReasoningPiAiAdapter extends PiAiAdapter {
   }
 }
 
-async function validateDefaults(adapter: PerModelReasoningPiAiAdapter, defaults: ModelDefaults) {
-  for (const [provider, models] of defaults) {
-    for (const model of models.keys()) await adapter.resolveModel(provider, model);
-  }
-}
-
 export const name = "custom-models";
-export const inject = ["llm"];
+export const inject = ["llm", "settings"];
 
-export async function apply(ctx: Context, config: Config = {}): Promise<void> {
-  const { profiles, defaults } = normalizeConfig(config);
-  if (profiles.size === 0) {
-    ctx.logger.info("dsh-custom-models: no providers configured; extension is dormant");
-    return;
-  }
+const SETTINGS_NS = settingsNamespace(name);
+const SETTINGS_EXPOSURE_ROUTE = "custom-models";
+
+export function apply(ctx: Context, config: Config = {}): void {
+  let source = () => config;
+  let normalized = normalizeConfig(config);
 
   const resolveApiKey: PiAiAdapterOptions["resolveApiKey"] = async (provider, profile) => {
     const ref = profile.apiKeyEnv;
@@ -374,12 +447,69 @@ export async function apply(ctx: Context, config: Config = {}): Promise<void> {
 
   const adapter = new PerModelReasoningPiAiAdapter(
     {
-      profiles: () => profiles,
+      profiles: () => normalized.profiles,
       resolveApiKey,
       resolveAttachments: () => ctx.get("attachments"),
     },
-    defaults,
+    () => normalized.defaults,
   );
-  await validateDefaults(adapter, defaults);
-  ctx.llm.registerAdapter([...profiles.keys()], adapter);
+
+  let registration: ReturnType<typeof ctx.llm.registerAdapter> | undefined;
+  const reconcile = () => {
+    const next = normalizeConfig(source());
+    const previous = normalized;
+    normalized = next;
+    try {
+      const routes = [...next.profiles.keys()];
+      if (registration === undefined) {
+        if (routes.length > 0) registration = ctx.llm.registerAdapter(routes, adapter);
+      } else {
+        registration.replace(routes);
+      }
+      if (routes.length === 0) {
+        ctx.logger.info("dsh-custom-models: no providers configured; extension is dormant");
+      }
+    } catch (error) {
+      // Route preparation failures happen before mutation and must restore the
+      // previous adapter snapshot. DSH invariant listeners are the only errors
+      // allowed to escape after commitRoutes has swapped the registry, so in
+      // that case the new snapshot must stay aligned with the committed routes.
+      if (!isRecord(error) || error.code !== "INVARIANT") normalized = previous;
+      throw error;
+    }
+  };
+
+  reconcile();
+  // HostApiProxy intentionally exposes only settings namespaces referenced by
+  // the configurable-provider directory (plus a small built-in allowlist).
+  // This stable bootstrap row grants the independent Custom models page access
+  // even before it contains its first provider. It does not register an LLM
+  // adapter route; if configured through the built-in Models page, it simply
+  // becomes a normal provider profile with the same route.
+  ctx.llm.registerConfigurableProviders([{
+    provider: SETTINGS_EXPOSURE_ROUTE,
+    displayName: "Custom models",
+    settingsNs: SETTINGS_NS,
+    settingsPath: ["providers", SETTINGS_EXPOSURE_ROUTE],
+    declared: true,
+  }]);
+  const scope = ctx.settings.register(SETTINGS_NS, Config, {
+    base: config,
+    validate: (value) => {
+      normalizeConfig(value);
+    },
+  });
+  source = () => scope.get();
+  const reconcileSettings = () => {
+    try {
+      reconcile();
+    } catch (error) {
+      ctx.logger.error(
+        "dsh-custom-models: keeping the previous provider registration after a refused settings update",
+      );
+      ctx.logger.error(error);
+    }
+  };
+  reconcileSettings();
+  scope.watch(reconcileSettings);
 }

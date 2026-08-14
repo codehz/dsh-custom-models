@@ -1,4 +1,5 @@
 import type { Context } from "@deepseek-ai/cordis";
+import z from "@deepseek-ai/schemastery";
 import { type LlmResolvedModelInfo, type RetryPolicyConfig } from "@deepseek-ai/dsh-llm";
 import { PiAiAdapter, type PiAiAdapterOptions, type PiAiCompatProfile, type ResolvedPiAiProviderProfile } from "@deepseek-ai/dsh-llm-pi-ai";
 import { type ModelThinkingLevel } from "@earendil-works/pi-ai";
@@ -30,6 +31,8 @@ export interface CustomProviderProfile {
 export interface Config {
     providers?: Record<string, CustomProviderProfile>;
 }
+/** Runtime schema used by Cordis and the DSH settings surface. */
+export declare const Config: z<Config>;
 export interface NormalizedConfig {
     profiles: ReadonlyMap<string, ResolvedPiAiProviderProfile>;
     defaults: ModelDefaults;
@@ -39,11 +42,11 @@ export declare function normalizeConfig(config?: Config): NormalizedConfig;
 /** Official pi-ai transport with exact-model defaults layered into metadata. */
 export declare class PerModelReasoningPiAiAdapter extends PiAiAdapter {
     #private;
-    constructor(options: PiAiAdapterOptions, defaults: ModelDefaults);
+    constructor(options: PiAiAdapterOptions, defaults: ModelDefaults | (() => ModelDefaults));
     resolveModel(provider: string, model: string, signal?: AbortSignal): Promise<LlmResolvedModelInfo>;
 }
 export declare const name = "custom-models";
 export declare const inject: string[];
-export declare function apply(ctx: Context, config?: Config): Promise<void>;
+export declare function apply(ctx: Context, config?: Config): void;
 export {};
 //# sourceMappingURL=index.d.ts.map

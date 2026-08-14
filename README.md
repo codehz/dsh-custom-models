@@ -22,7 +22,18 @@ DSH 的请求运行时会在调用前验证所选推理努力。第三方模型�
 dsh plugin --profile web add /home/codehz/Projects/dsh-custom-models
 ~~~
 
-安装后修改 **$DSH_HOME/profiles/web/cordis.patch.yml**。下面的 patch 通过 id 命中 bundle 已插入的 **custom-models** 条目；DSH 对条目的 **config** 做整值替换而不是递归合并，因此这里必须给出完整配置：
+安装并加载后，打开 Web GUI 的 **设置 → 自定义模型**。设置页可以：
+
+- 新增、编辑、删除 provider 与模型；
+- 配置 endpoint、协议、容量、输入模态、兼容选项与重试策略；
+- 为每个模型配置推理等级、供应商 wire 值和默认推理等级；
+- 将 API Key 写入 DSH credentials。浏览器只读取“已配置/来源/可写”状态，永远不会回读或显示密钥值。
+
+页面修改存放在 **$DSH_HOME/settings.yaml** 的 **custom-models** namespace，并实时应用到后续调用。插件 entry 中的 config 仍然作为 base 层：设置页只保存用户覆盖；对 base provider 执行“重置”会重新继承 entry 配置。
+
+### 手工配置（可选）
+
+也可以修改 **$DSH_HOME/profiles/web/cordis.patch.yml**。下面的 patch 通过 id 命中 bundle 已插入的 **custom-models** 条目；DSH 对条目的 **config** 做整值替换而不是递归合并，因此这里必须给出完整配置：
 
 ~~~yaml
 - id: custom-models
@@ -82,7 +93,7 @@ dsh plugin --profile web add /home/codehz/Projects/dsh-custom-models
 - 不要同时在内置“模型”设置页和本扩展中配置同一个 provider key；或
 - 为本扩展使用独立 route 名称，例如 **acme-reasoning**。
 
-API Key 在每次请求时动态读取：优先使用当前可用的 DSH credentials 服务；该服务不可用时，使用 DSH 启动环境快照（包括导出的环境变量和启动层）。引用名和值都会走 DSH 官方校验。底层请求、流式事件、附件、归因头和供应商兼容逻辑继续由官方 **PiAiAdapter** 处理。
+API Key 在每次请求时动态读取：优先使用当前可用的 DSH credentials 服务；该服务不可用时，使用 DSH 启动环境快照（包括导出的环境变量和启动层）。引用名和值都会走 DSH 官方校验。设置页修改 credential 引用时不会自动删除旧引用，避免误删被其他配置复用的密钥；只有用户明确执行移除时才调用 credentials unset。底层请求、流式事件、附件、归因头和供应商兼容逻辑继续由官方 **PiAiAdapter** 处理。
 
 ## 开发
 

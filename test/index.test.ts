@@ -1,8 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import { Context } from "@deepseek-ai/cordis";
 import { LlmRuntime } from "@deepseek-ai/dsh-llm";
+import { SettingsProvider, type SettingsNamespace } from "@deepseek-ai/dsh-settings";
 import {
+  Config as ConfigSchema,
   PerModelReasoningPiAiAdapter,
+  apply,
+  inject,
   normalizeConfig,
   type Config,
   type CustomProviderProfile,
@@ -35,6 +39,16 @@ const baseProvider = {
   ],
 } satisfies NonNullable<Config["providers"]>[string];
 
+class MemorySettings extends SettingsProvider {
+  readonly writable = true;
+
+  protected async load(): Promise<Record<string, unknown>> {
+    return {};
+  }
+
+  protected async persist(_ns: SettingsNamespace, _section: Record<string, unknown>): Promise<void> {}
+}
+
 function adapterFor(config: Config) {
   const normalized = normalizeConfig(config);
   return new PerModelReasoningPiAiAdapter(
@@ -45,6 +59,64 @@ function adapterFor(config: Config) {
     normalized.defaults,
   );
 }
+
+describe("settings namespace exposure", () => {
+  test("publishes a bootstrap configurable-provider row with no providers", async () => {
+    const ctx = new Context();
+    await ctx.plugin(LlmRuntime);
+    await ctx.plugin(MemorySettings);
+    await ctx.plugin({ apply, inject }, { providers: {} });
+
+    expect(ctx.llm.listConfigurableProviders()).toContainEqual({
+      provider: "custom-models",
+      displayName: "Custom models",
+      settingsNs: "custom-models",
+      settingsPath: ["providers", "custom-models"],
+      declared: true,
+    });
+    expect(ctx.settings.describe().map((entry) => String(entry.ns))).toContain("custom-models");
+    await ctx.fiber.dispose();
+  });
+});
+
+describe("runtime configuration schema", () => {
+  test("defaults an omitted providers dictionary", () => {
+    expect(ConfigSchema({})).toEqual({ providers: {} });
+  });
+
+  test("rejects malformed model capacities before normalization", () => {
+    expect(() => ConfigSchema({
+      providers: {
+        acme: {
+          baseURL: "https://gateway.example/v1",
+          models: [{ id: "broken", contextWindow: 0 }],
+        },
+      },
+    })).toThrow();
+  });
+
+  test("keeps omitted model input and compat semantically absent", async () => {
+    const parsed = ConfigSchema({
+      providers: {
+        acme: {
+          api: "openai-responses",
+          baseURL: "https://gateway.example/v1",
+          models: [{ id: "plain" }],
+        },
+      },
+    });
+    const normalized = normalizeConfig(parsed);
+    const adapter = new PerModelReasoningPiAiAdapter(
+      {
+        profiles: () => normalized.profiles,
+        resolveApiKey: async () => undefined,
+      },
+      normalized.defaults,
+    );
+
+    expect((await adapter.resolveModel("acme", "plain")).inputModalities).toEqual(["text"]);
+  });
+});
 
 describe("per-model reasoning defaults", () => {
   test("materializes a configured exact-model default", async () => {
@@ -79,12 +151,27 @@ describe("per-model reasoning defaults", () => {
     expect(model.reasoning).toBeUndefined();
   });
 
-  test("rejects a default the model does not advertise", async () => {
+  test("reads per-model defaults from a replaceable snapshot", async () => {
+    const normalized = normalizeConfig({ providers: { acme: baseProvider } });
+    let defaults = normalized.defaults;
+    const adapter = new PerModelReasoningPiAiAdapter(
+      {
+        profiles: () => normalized.profiles,
+        resolveApiKey: async () => undefined,
+      },
+      () => defaults,
+    );
+
+    expect(String((await adapter.resolveModel("acme", "acme-think")).reasoning?.defaultEffort)).toBe("high");
+    defaults = new Map();
+    expect((await adapter.resolveModel("acme", "acme-think")).reasoning?.defaultEffort).toBeUndefined();
+  });
+
+  test("rejects a default the model does not advertise while normalizing", () => {
     const provider = structuredClone(baseProvider) as CustomProviderProfile;
     provider.models[0]!.defaultReasoningEffort = "medium";
-    const adapter = adapterFor({ providers: { acme: provider } });
 
-    await expect(adapter.resolveModel("acme", "acme-think")).rejects.toThrow(
+    expect(() => normalizeConfig({ providers: { acme: provider } })).toThrow(
       "defaultReasoningEffort 'medium'",
     );
   });

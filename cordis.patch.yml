@@ -1,4 +1,4 @@
-# dsh-custom-models is inert until the profile patch supplies providers.
+# Providers start empty and can be added from Settings → Custom models or a profile patch.
 - insert:
     - id: custom-models
       name: 'dsh-custom-models'
