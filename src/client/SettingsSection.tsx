@@ -200,21 +200,32 @@ export function SettingsSection({ api, t }: Props) {
     </div> : null}
     {snapshot.loading && snapshot.namespace === undefined ? <p>{t("loading")}</p> : <div className="cm-layout">
       <nav className="cm-list" aria-label={t("title")}>
-        {routes.length === 0 ? <p className="cm-sub">{t("empty")}</p> : null}
+        {routes.length === 0 ? <p className="cm-empty">{t("empty")}</p> : null}
         {routes.map((route) => <button
           type="button"
           className="cm-provider"
           aria-current={selected === route}
+          aria-controls="cm-provider-editor"
           key={route}
           onClick={() => choose(route)}
         >
-          <strong>{nameOf(layers.resolved[route], route)}</strong><br/>
+          <span className="cm-provider-title">{nameOf(layers.resolved[route], route)}</span>
           <span className="cm-badge">
             {route} · {snapshot.active.has(route) ? t("active") : t("inactive")} · {Object.hasOwn(layers.user, route) ? t("user") : t("base")}
           </span>
         </button>)}
       </nav>
-      {draft !== undefined ? <fieldset className="cm-editor" disabled={disabled}>
+      {draft !== undefined ? <fieldset id="cm-provider-editor" className="cm-editor" disabled={disabled}>
+        <legend className="cm-sr-only">{draft.displayName || draft.route || t("add")}</legend>
+        <div className="cm-editor-head">
+          <div className="cm-editor-identity">
+            <strong className="cm-editor-title">{draft.displayName || draft.route || t("add")}</strong>
+            {draft.route !== "" ? <span className="cm-editor-route">{draft.route}</span> : null}
+          </div>
+          {selected !== undefined ? <span className="cm-badge">
+            {snapshot.active.has(selected) ? t("active") : t("inactive")} · {selectedHasUserOverride ? t("user") : t("base")}
+          </span> : null}
+        </div>
         <div className="cm-grid">
           <Field label={t("route")} error={routeCollision ? t("routeExists") : validationMessage(validation?.errors.route)}>
             <Input value={draft.route} disabled={selected !== undefined || disabled} onChange={(event) => edit((value) => { value.route = event.target.value; })}/>
