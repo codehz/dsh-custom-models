@@ -434,7 +434,7 @@ textarea.cm-input {
 .cm-override-toggle {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  gap: 4px;
   width: fit-content;
   margin: 0;
   padding: 0;
@@ -447,6 +447,7 @@ textarea.cm-input {
   text-align: left;
   cursor: pointer;
 }
+.cm-override-toggle svg { flex: none; }
 .cm-override-toggle:hover { color: var(--dsw-alias-label-primary); }
 .cm-override-toggle:focus-visible { outline: 2px solid var(--dsw-alias-state-business-primary); outline-offset: 2px; }
 .cm-override-count { color: var(--dsw-alias-label-tertiary); font-size: 12px; }

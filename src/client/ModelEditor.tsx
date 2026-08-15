@@ -225,7 +225,7 @@ export function ModelEditor({
             disabled={disabled}
             onClick={() => setOverrideOpen((value) => !value)}
           >
-            <span aria-hidden="true">{showOverrides ? "▾" : "▸"}</span>
+            <IconChevron open={showOverrides} />
             {t("overrideWires")}
             {overrideCount > 0 ? <span className="cm-override-count">{t("overrideCount").replace("{count}", String(overrideCount))}</span> : null}
           </button>
