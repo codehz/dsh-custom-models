@@ -33,6 +33,7 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.build.json && tsdown",
+    "prepack": "pnpm run build",
     "bundle": "tsdown",
     "watch": "tsdown --watch",
     "check": "tsc -p tsconfig.json --noEmit",

@@ -98,7 +98,10 @@ API Key 在每次请求时动态读取：优先使用当前可用的 DSH credent
 
 ## 开发
 
+`lib/` 是构建产物，不进 Git。本地安装或从源码加载前先打包；`pnpm pack` / `pnpm publish` 会通过 `prepack` 自动执行 `pnpm build`。
+
 ~~~bash
 pnpm install
+pnpm build
 pnpm verify
 ~~~
