@@ -1,8 +1,11 @@
 import React, { useEffect, useState } from "react";
-import type { CredentialView } from "@deepseek-ai/dsh-api-remotes/client";
+import { Button, Modal } from "@deepseek-ai/dsh-client-ui-primitives";
+import type { CredentialView, DiscoveredModelView, IApiClient } from "@deepseek-ai/dsh-api-remotes/client";
 import type { TranslateNS } from "@deepseek-ai/dsh-client-locale/client";
 import { ModelEditor } from "./ModelEditor.js";
+import { adoptDiscoveredModels } from "./model-utils.js";
 import { validationKey } from "./locales.js";
+import { describeError } from "./store.js";
 import { deriveKeyRef } from "./validation.js";
 import {
   THINKING_FORMATS,
@@ -12,7 +15,10 @@ import {
   type ValidationResult,
 } from "./types.js";
 
+const SETTINGS_NS = "custom-models";
+
 export interface ProviderEditorProps {
+  api: IApiClient;
   draft: ProviderDraft;
   mode: "create" | "edit";
   credential?: CredentialView | undefined;
@@ -47,8 +53,12 @@ function Field({
 
 export function ProviderEditor(props: ProviderEditorProps) {
   const {
-    draft, mode, t, disabled, busy, validation, routeCollision,
+    api, draft, mode, t, disabled, busy, validation, routeCollision,
   } = props;
+  const [fetchBusy, setFetchBusy] = useState(false);
+  const [fetchError, setFetchError] = useState("");
+  const [candidates, setCandidates] = useState<DiscoveredModelView[]>();
+  const [picked, setPicked] = useState<ReadonlySet<string>>(() => new Set());
   const validationMessage = (code: string | undefined) => {
     const key = validationKey(code);
     return key === undefined ? undefined : t(key);
@@ -170,12 +180,71 @@ export function ProviderEditor(props: ProviderEditorProps) {
       : null}
   </Field>;
 
+  const askable = draft.baseURL.trim() !== "";
+  const fetchModels = async () => {
+    setFetchBusy(true);
+    setFetchError("");
+    try {
+      const typedKey = props.secret.trim();
+      const response = await api.llm.discoverModels({
+        settingsNs: SETTINGS_NS,
+        ...(mode === "edit" && draft.route !== "" ? { provider: draft.route } : {}),
+        ...(askable ? { baseURL: draft.baseURL.trim() } : {}),
+        api: draft.api,
+        ...(typedKey === "" ? {} : { apiKey: typedKey }),
+      });
+      if (!response.result.ok) {
+        setFetchError(response.result.error.message);
+        return;
+      }
+      const found = response.result.value.models;
+      if (found.length === 0) {
+        setFetchError(t("fetchEmpty"));
+        return;
+      }
+      const known = new Set(draft.models.map((model) => model.id.trim()).filter(Boolean));
+      setCandidates(found);
+      setPicked(new Set(found.filter((model) => !known.has(model.id)).map((model) => model.id)));
+    } catch (error) {
+      setFetchError(describeError(error));
+    } finally {
+      setFetchBusy(false);
+    }
+  };
+  const closePicker = () => {
+    setCandidates(undefined);
+    setPicked(new Set());
+  };
+  const adoptPicked = () => {
+    if (candidates === undefined) return;
+    props.onChange((value) => {
+      value.models = adoptDiscoveredModels(value.models, candidates, picked);
+    });
+    closePicker();
+  };
+  const toggleCandidate = (id: string) => {
+    setPicked((current) => {
+      const next = new Set(current);
+      if (!next.delete(id)) next.add(id);
+      return next;
+    });
+  };
+
   const models = <section className="cm-model-catalog" aria-label={t("models")}>
     <div className="cm-model-list-head">
       <div className="cm-model-catalog-heading">
         <span className="cm-model-catalog-title">{t("models")}</span>
         <span className="cm-model-catalog-meta">{t("modelsCustomized")}</span>
       </div>
+      <button
+        type="button"
+        className="cm-link"
+        disabled={disabled || fetchBusy || !askable}
+        title={askable ? undefined : t("fetchNeedsBaseUrl")}
+        onClick={() => { void fetchModels(); }}
+      >
+        {fetchBusy ? t("fetching") : t("fetchModels")}
+      </button>
     </div>
     {draft.models.length === 0 ? <p className="cm-model-empty">{t("modelsEmpty")}</p> : null}
     {draft.models.map((model, index) => <ModelEditor
@@ -202,6 +271,31 @@ export function ProviderEditor(props: ProviderEditorProps) {
     {validation?.errors.models !== undefined
       ? <p className="cm-error">{validationMessage(validation.errors.models)}</p>
       : null}
+    {fetchError !== "" ? <p className="cm-error" role="alert">{fetchError}</p> : null}
+    <Modal
+      open={candidates !== undefined}
+      onClose={closePicker}
+      title={t("fetchTitle")}
+      closeLabel={t("close")}
+      description={t("fetchDescription")}
+      footer={<>
+        <Button type="button" onClick={closePicker}>{t("cancel")}</Button>
+        <Button type="button" variant="primary" onClick={adoptPicked}>{t("fetchAdopt")}</Button>
+      </>}
+    >
+      <ul className="cm-candidate-list">
+        {(candidates ?? []).map((candidate) => <li key={candidate.id} className="cm-candidate">
+          <label className="cm-candidate-label">
+            <input
+              type="checkbox"
+              checked={picked.has(candidate.id)}
+              onChange={() => toggleCandidate(candidate.id)}
+            />
+            <span className="cm-candidate-id">{candidate.id}</span>
+          </label>
+        </li>)}
+      </ul>
+    </Modal>
   </section>;
 
   const headerError = Object.entries(validation?.errors ?? {}).find(([path]) => path.startsWith("headers."));

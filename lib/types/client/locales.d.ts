@@ -42,6 +42,13 @@ export declare const zh: {
     readonly modelsCustomized: "已自定义模型目录";
     readonly modelsEmpty: "尚未添加模型。未列出的 ID 仍可直接发送。";
     readonly addModel: "添加模型";
+    readonly fetchModels: "获取可用模型";
+    readonly fetching: "正在询问提供方…";
+    readonly fetchNeedsBaseUrl: "请先填写 API 地址，再获取。";
+    readonly fetchEmpty: "该提供方没有列出任何模型，请手动添加。";
+    readonly fetchTitle: "选择要添加的模型";
+    readonly fetchDescription: "以下是模型提供方的可用模型，勾选要添加的模型。";
+    readonly fetchAdopt: "添加所选";
     readonly modelId: "模型 ID";
     readonly modelName: "显示名称";
     readonly modelNamePlaceholder: "留空时使用模型 ID";

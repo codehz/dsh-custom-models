@@ -13,6 +13,7 @@ import {
   type ReasoningEffortId,
   type RetryPolicyConfig,
 } from "@deepseek-ai/dsh-llm";
+import { discoverModels } from "./discovery.js";
 import {
   PiAiAdapter,
   type PiAiAdapterOptions,
@@ -418,6 +419,8 @@ export class PerModelReasoningPiAiAdapter extends PiAiAdapter {
   }
 }
 
+export { discoverModels, listingUrl, readListing } from "./discovery.js";
+
 export const name = "custom-models";
 export const inject = ["llm", "settings"];
 
@@ -493,6 +496,27 @@ export function apply(ctx: Context, config: Config = {}): void {
     settingsPath: ["providers", SETTINGS_EXPOSURE_ROUTE],
     declared: true,
   }]);
+  const storedApiKey = async (provider?: string) => {
+    if (provider === undefined) return undefined;
+    const profile = normalized.profiles.get(provider);
+    if (profile?.apiKeyEnv === undefined) return undefined;
+    const credentials = ctx.get("credentials");
+    const value = credentials !== undefined
+      ? (await credentials.resolve(profile.apiKeyEnv))?.value
+      : launchEnvironmentOf(ctx).get(profile.apiKeyEnv)?.value;
+    if (value === undefined || value.length === 0) return undefined;
+    return assertUsableApiKey(value, "dsh-custom-models", String(profile.apiKeyEnv));
+  };
+  ctx.llm.registerModelDiscovery(SETTINGS_NS, (request) => {
+    const profile = request.provider === undefined
+      ? undefined
+      : normalized.profiles.get(request.provider);
+    return discoverModels(
+      request,
+      () => storedApiKey(request.provider),
+      profile?.headers,
+    );
+  });
   const scope = ctx.settings.register(SETTINGS_NS, Config, {
     base: config,
     validate: (value) => {

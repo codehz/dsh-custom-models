@@ -200,6 +200,7 @@ export function SettingsSection({ api, t }: Props) {
   }
 
   const editor = draft === undefined || editing === undefined ? null : <ProviderEditor
+    api={api}
     draft={draft}
     mode={editing === "new" ? "create" : "edit"}
     credential={credential}

@@ -45,8 +45,8 @@ export declare class PerModelReasoningPiAiAdapter extends PiAiAdapter {
     constructor(options: PiAiAdapterOptions, defaults: ModelDefaults | (() => ModelDefaults));
     resolveModel(provider: string, model: string, signal?: AbortSignal): Promise<LlmResolvedModelInfo>;
 }
+export { discoverModels, listingUrl, readListing } from "./discovery.js";
 export declare const name = "custom-models";
 export declare const inject: string[];
 export declare function apply(ctx: Context, config?: Config): void;
-export {};
 //# sourceMappingURL=index.d.ts.map

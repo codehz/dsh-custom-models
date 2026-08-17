@@ -323,6 +323,34 @@ textarea.cm-input {
   justify-content: space-between;
   gap: 12px;
 }
+.cm-model-list-head .cm-link { flex: none; }
+.cm-candidate-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 360px;
+  margin: 0;
+  overflow: auto;
+  padding: 0;
+  list-style: none;
+}
+.cm-candidate { margin: 0; }
+.cm-candidate-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+  border-radius: 6px;
+  padding: 0 4px;
+  cursor: pointer;
+}
+.cm-candidate-label:hover { background: var(--dsw-alias-interactive-bg-hover); }
+.cm-candidate-id {
+  overflow-wrap: anywhere;
+  color: var(--dsw-alias-label-primary);
+  font-size: 13px;
+  line-height: 20px;
+}
 .cm-model-catalog-heading { display: flex; flex-direction: column; gap: 2px; }
 .cm-model-catalog-title {
   color: var(--dsw-alias-label-secondary);

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { Config as ConfigSchema, normalizeConfig, type CustomProviderProfile } from "../src/index.js";
-import { providerFromValue, providerToValue } from "../src/client/model-utils.js";
+import { adoptDiscoveredModels, providerFromValue, providerToValue } from "../src/client/model-utils.js";
 import {
   customEffortCount,
   enableEffort,
@@ -128,6 +128,28 @@ describe("client provider editor", () => {
       contextWindow: "1M",
       maxTokens: "256K",
     }));
+  });
+
+  test("adopts discovered models without clobbering existing rows", () => {
+    const draft = emptyProvider();
+    draft.models[0]!.id = "keep";
+    draft.models[0]!.name = "Kept";
+    draft.models.push(emptyProvider().models[0]!);
+
+    const adopted = adoptDiscoveredModels(
+      draft.models,
+      [
+        { id: "keep", name: "Remote Keep", contextWindow: 1000 },
+        { id: "new", name: "New", contextWindow: 256_000, maxTokens: 32_000 },
+        { id: "skip" },
+      ],
+      new Set(["keep", "new"]),
+    );
+
+    expect(adopted).toEqual([
+      expect.objectContaining({ id: "keep", name: "Kept" }),
+      expect.objectContaining({ id: "new", name: "New", contextWindow: "256K", maxTokens: "32K" }),
+    ]);
   });
 
   test("treats schema-materialized empty input as inherited text", () => {

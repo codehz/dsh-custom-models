@@ -1,8 +1,9 @@
 import React from "react";
-import type { CredentialView } from "@deepseek-ai/dsh-api-remotes/client";
+import type { CredentialView, IApiClient } from "@deepseek-ai/dsh-api-remotes/client";
 import type { TranslateNS } from "@deepseek-ai/dsh-client-locale/client";
 import { type ProviderDraft, type ValidationResult } from "./types.js";
 export interface ProviderEditorProps {
+    api: IApiClient;
     draft: ProviderDraft;
     mode: "create" | "edit";
     credential?: CredentialView | undefined;

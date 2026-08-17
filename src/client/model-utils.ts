@@ -1,15 +1,23 @@
-import { capacityText, numericCapacity } from "./capacity.js";
+import { capacityText, formatCapacity, numericCapacity } from "./capacity.js";
 import { normalizeEffortMap } from "./reasoning.js";
 import {
   EFFORTS,
   THINKING_FORMATS,
   emptyCompat,
+  emptyModel,
   type CompatDraft,
   type EffortMap,
   type ModelDraft,
   type ProviderDraft,
   type ThinkingFormat,
 } from "./types.js";
+
+export interface DiscoveredModel {
+  id: string;
+  name?: string;
+  contextWindow?: number;
+  maxTokens?: number;
+}
 
 function record(value: unknown): Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value)
@@ -44,6 +52,34 @@ function compatToValue(value: CompatDraft): Record<string, unknown> | undefined 
     result.supportsReasoningEffort = value.supportsReasoningEffort === "true";
   }
   return Object.keys(result).length === 0 ? undefined : result;
+}
+
+export function modelFromDiscovered(candidate: DiscoveredModel): ModelDraft {
+  return {
+    ...emptyModel(),
+    id: candidate.id,
+    name: candidate.name ?? "",
+    contextWindow: candidate.contextWindow === undefined ? "" : formatCapacity(candidate.contextWindow),
+    maxTokens: candidate.maxTokens === undefined ? "" : formatCapacity(candidate.maxTokens),
+  };
+}
+
+/** Merge picked listing rows into the draft catalog, keeping existing edits. */
+export function adoptDiscoveredModels(
+  models: readonly ModelDraft[],
+  candidates: readonly DiscoveredModel[],
+  picked: ReadonlySet<string>,
+): ModelDraft[] {
+  const byId = new Map<string, ModelDraft>();
+  for (const model of models) {
+    const id = model.id.trim();
+    if (id !== "") byId.set(id, model);
+  }
+  for (const candidate of candidates) {
+    if (!picked.has(candidate.id)) continue;
+    byId.set(candidate.id, byId.get(candidate.id) ?? modelFromDiscovered(candidate));
+  }
+  return [...byId.values()];
 }
 
 export function providersOf(layer: unknown): Record<string, unknown> {

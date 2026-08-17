@@ -25,6 +25,7 @@ dsh plugin --profile web add /home/codehz/Projects/dsh-custom-models
 安装并加载后，打开 Web GUI 的 **设置 → 自定义模型**。设置页按官方模型配置的卡片布局：每个提供商一行，点 **编辑** 就地展开，再点一次收起。设置页可以：
 
 - 新增、编辑、删除 provider 与模型；
+- 通过标准 `GET {baseURL}/models`（`llm.discoverModels`）拉取可用模型，失败时在表单内提示原因；
 - 在展开的「自定义设置」里配置 endpoint、协议、容量、输入模态、兼容选项与重试策略；
 - 模型目录为紧凑行，点开后编辑上下文窗口、最大输出与推理等级；
 - 将 API Key 写入 DSH credentials。浏览器只读取“已配置/来源/可写”状态，永远不会回读或显示密钥值。

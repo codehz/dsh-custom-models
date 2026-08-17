@@ -6,8 +6,11 @@ import {
   Config as ConfigSchema,
   PerModelReasoningPiAiAdapter,
   apply,
+  discoverModels,
   inject,
+  listingUrl,
   normalizeConfig,
+  readListing,
   type Config,
   type CustomProviderProfile,
 } from "../src/index.js";
@@ -76,6 +79,71 @@ describe("settings namespace exposure", () => {
     });
     expect(ctx.settings.describe().map((entry) => String(entry.ns))).toContain("custom-models");
     await ctx.fiber.dispose();
+  });
+
+  test("registers OpenAI-compatible model discovery for the settings namespace", async () => {
+    const ctx = new Context();
+    await ctx.plugin(LlmRuntime);
+    await ctx.plugin(MemorySettings);
+    await ctx.plugin({ apply, inject }, { providers: {} });
+
+    const original = globalThis.fetch;
+    globalThis.fetch = (async () => new Response(JSON.stringify({
+      data: [{ id: "remote-chat", name: "Remote Chat", context_window: 128000 }],
+    }), { status: 200 })) as unknown as typeof fetch;
+    try {
+      await expect(ctx.llm.discoverModels("custom-models", {
+        baseURL: "https://gateway.example/v1",
+        api: "openai-completions",
+      })).resolves.toEqual([
+        { id: "remote-chat", name: "Remote Chat", contextWindow: 128000 },
+      ]);
+    } finally {
+      globalThis.fetch = original;
+      await ctx.fiber.dispose();
+    }
+  });
+});
+
+describe("openai model listing", () => {
+  test("joins the listing path without collapsing a gateway prefix", () => {
+    expect(listingUrl("https://gateway.example/openai/v1/")).toBe(
+      "https://gateway.example/openai/v1/models",
+    );
+  });
+
+  test("reads ids and optional capacities from a standard listing", () => {
+    expect(readListing({
+      data: [
+        { id: "plain" },
+        { id: "", name: "ignored" },
+        {
+          id: "think",
+          display_name: "Think",
+          context_length: 256000,
+          max_output_tokens: 8192,
+        },
+      ],
+    })).toEqual([
+      { id: "plain" },
+      { id: "think", name: "Think", contextWindow: 256000, maxTokens: 8192 },
+    ]);
+  });
+
+  test("rejects a reply that is not an OpenAI listing", () => {
+    expect(() => readListing({ models: [{ id: "x" }] })).toThrow('no "data" array');
+  });
+
+  test("surfaces HTTP failures from GET /models", async () => {
+    const original = globalThis.fetch;
+    globalThis.fetch = (async () => new Response("nope", { status: 401 })) as unknown as typeof fetch;
+    try {
+      await expect(discoverModels({
+        baseURL: "https://gateway.example/v1",
+      })).rejects.toThrow("answered 401; check the API key");
+    } finally {
+      globalThis.fetch = original;
+    }
   });
 });
 
