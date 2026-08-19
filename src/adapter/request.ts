@@ -1,3 +1,4 @@
+import type { PromptCacheSettings } from "@codehz/ai";
 import {
   LlmError,
   ReasoningEffortId,
@@ -75,16 +76,22 @@ export function requestHeaders(headers: Record<string, string> | undefined): Rec
   };
 }
 
-export function applyPromptCacheKey(
-  extraBody: Record<string, unknown>,
+/**
+ * Map DSH provider cacheRetention + sessionId onto @codehz/ai portable cache.
+ * Retention short/long become provider TTL hints; none disables caching.
+ */
+export function promptCacheSettings(
   api: SupportedApi,
   sessionId: unknown,
   cacheRetention: CacheRetention | undefined,
-): Record<string, unknown> {
-  if (!PROMPT_CACHE_APIS.has(api) || sessionId === undefined || cacheRetention === "none") {
-    return extraBody;
-  }
-  return { ...extraBody, prompt_cache_key: String(sessionId) };
+): PromptCacheSettings | undefined {
+  if (!PROMPT_CACHE_APIS.has(api)) return undefined;
+  if (cacheRetention === "none") return { mode: "off" };
+  if (sessionId === undefined) return undefined;
+  return {
+    key: String(sessionId),
+    ...(cacheRetention === undefined ? {} : { ttl: cacheRetention }),
+  };
 }
 
 function hostnameOf(baseURL: string): string {

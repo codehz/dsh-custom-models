@@ -31,7 +31,7 @@ import type {
   ResolvedProviderProfile,
 } from "./profile.js";
 import {
-  applyPromptCacheKey,
+  promptCacheSettings,
   reasoningExtraBody,
   reasoningInfo,
   requestHeaders,
@@ -164,12 +164,8 @@ export class CodehzAiAdapter extends LlmAdapter {
           });
         };
         const converted = await toAiRequest(options, attachments, onReplayDegrade);
-        const extraBody = applyPromptCacheKey(
-          reasoningExtraBody(profile, model, reasoning),
-          profile.api,
-          options.sessionId,
-          profile.cacheRetention,
-        );
+        const extraBody = reasoningExtraBody(profile, model, reasoning);
+        const cache = promptCacheSettings(profile.api, options.sessionId, profile.cacheRetention);
         const headers = requestHeaders(profile.headers);
         const backendOptions = {
           apiKey: apiKey ?? "",
@@ -190,6 +186,7 @@ export class CodehzAiAdapter extends LlmAdapter {
             ...converted,
             ...(options.temperature === undefined ? {} : { temperature: options.temperature }),
             ...(options.maxTokens === undefined ? {} : { maxOutputTokens: options.maxTokens }),
+            ...(cache === undefined ? {} : { cache }),
             signal: watchdog.signal,
           }),
           {

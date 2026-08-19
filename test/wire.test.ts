@@ -79,7 +79,7 @@ test("sends the model-specific reasoning effort wire value", async () => {
 });
 
 async function captureAdapterPayload(
-  cacheRetention: "none" | "short" | undefined,
+  cacheRetention: "none" | "short" | "long" | undefined,
   sessionId: unknown,
   api: "openai-completions" | "openai-responses" = "openai-completions",
 ) {
@@ -125,25 +125,48 @@ async function captureAdapterPayload(
 test("local adapter sends sessionId verbatim as prompt_cache_key for default cache", async () => {
   const payload = await captureAdapterPayload(undefined, "default-session");
   expect(payload?.prompt_cache_key).toBe("default-session");
+  expect(payload).not.toHaveProperty("prompt_cache_retention");
 });
 
-test("local adapter sends sessionId verbatim as prompt_cache_key for short cache", async () => {
+test("local adapter maps short cacheRetention to in_memory retention", async () => {
   const payload = await captureAdapterPayload("short", 12345);
   expect(payload?.prompt_cache_key).toBe("12345");
+  expect(payload?.prompt_cache_retention).toBe("in_memory");
+});
+
+test("local adapter maps long cacheRetention to 24h retention", async () => {
+  const payload = await captureAdapterPayload("long", "long-session");
+  expect(payload?.prompt_cache_key).toBe("long-session");
+  expect(payload?.prompt_cache_retention).toBe("24h");
 });
 
 test("local adapter omits prompt_cache_key when cacheRetention is none", async () => {
   const payload = await captureAdapterPayload("none", "session-raw");
   expect(payload).not.toHaveProperty("prompt_cache_key");
+  expect(payload).not.toHaveProperty("prompt_cache_retention");
 });
 
 test("local adapter sends a long sessionId verbatim for openai-responses", async () => {
   const sessionId = "responses-session-" + "x".repeat(80);
   const payload = await captureAdapterPayload(undefined, sessionId, "openai-responses");
   expect(payload?.prompt_cache_key).toBe(sessionId);
+  expect(payload).not.toHaveProperty("prompt_cache_options");
+});
+
+test("local adapter maps Responses short cacheRetention into prompt_cache_options", async () => {
+  const payload = await captureAdapterPayload("short", "responses-short", "openai-responses");
+  expect(payload?.prompt_cache_key).toBe("responses-short");
+  expect(payload?.prompt_cache_options).toEqual({ retention: "in_memory" });
+});
+
+test("local adapter maps Responses long cacheRetention into prompt_cache_options", async () => {
+  const payload = await captureAdapterPayload("long", "responses-long", "openai-responses");
+  expect(payload?.prompt_cache_key).toBe("responses-long");
+  expect(payload?.prompt_cache_options).toEqual({ retention: "24h" });
 });
 
 test("local adapter omits the Responses cache key when cacheRetention is none", async () => {
   const payload = await captureAdapterPayload("none", "responses-session", "openai-responses");
   expect(payload).not.toHaveProperty("prompt_cache_key");
+  expect(payload).not.toHaveProperty("prompt_cache_options");
 });

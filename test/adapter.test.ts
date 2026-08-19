@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { CallId, LlmError, type Message, type MessageSource } from "@deepseek-ai/dsh-llm";
 import type { ReplayItem } from "@codehz/ai";
 import { toInputItems, toReplayState } from "../src/adapter/replay.js";
-import { applyPromptCacheKey, resolveReasoningLevel } from "../src/adapter/request.js";
+import { promptCacheSettings, resolveReasoningLevel } from "../src/adapter/request.js";
 import { mapStopReason, mapUsage, toStreamChunks } from "../src/adapter/stream.js";
 import type { ResolvedModel } from "../src/adapter/profile.js";
 
@@ -192,13 +192,17 @@ describe("stream mapping", () => {
 });
 
 describe("request options", () => {
-  test("writes sessionId as prompt_cache_key only for cacheable OpenAI APIs", () => {
-    expect(applyPromptCacheKey({ model: "chat" }, "openai-completions", "sess", undefined))
-      .toEqual({ model: "chat", prompt_cache_key: "sess" });
-    expect(applyPromptCacheKey({ model: "chat" }, "openai-completions", "sess", "none"))
-      .toEqual({ model: "chat" });
-    expect(applyPromptCacheKey({ model: "chat" }, "openai-responses", "sess", "none"))
-      .toEqual({ model: "chat" });
+  test("maps cacheRetention onto portable @codehz/ai cache settings", () => {
+    expect(promptCacheSettings("openai-completions", "sess", undefined))
+      .toEqual({ key: "sess" });
+    expect(promptCacheSettings("openai-completions", 12345, "short"))
+      .toEqual({ key: "12345", ttl: "short" });
+    expect(promptCacheSettings("openai-responses", "sess", "long"))
+      .toEqual({ key: "sess", ttl: "long" });
+    expect(promptCacheSettings("openai-completions", "sess", "none"))
+      .toEqual({ mode: "off" });
+    expect(promptCacheSettings("openai-responses", undefined, "short"))
+      .toBeUndefined();
   });
 
   test("refuses an unsupported reasoning effort", () => {
