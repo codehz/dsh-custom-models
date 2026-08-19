@@ -72,7 +72,7 @@
     "react": "^18.2.0"
   },
   "dependencies": {
-    "@codehz/ai": "^0.8.1"
+    "@codehz/ai": "^0.8.2"
   },
   "devDependencies": {
     "@deepseek-ai/cordis": "^4.0.1",

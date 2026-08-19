@@ -9,8 +9,8 @@ importers:
   .:
     dependencies:
       '@codehz/ai':
-        specifier: ^0.8.1
-        version: 0.8.1
+        specifier: ^0.8.2
+        version: 0.8.2
     devDependencies:
       '@deepseek-ai/cordis':
         specifier: ^4.0.1
@@ -81,8 +81,8 @@ importers:
 
 packages:
 
-  '@codehz/ai@0.8.1':
-    resolution: {integrity: sha512-x473QOLw9C1DuGGJW3nEv27ns2vyT7TZp9ybhWRcVPdPIvhd+fMtc5s37iOjHt4X596RwLUzp4BNHikJYukq4A==}
+  '@codehz/ai@0.8.2':
+    resolution: {integrity: sha512-C1ymqVwphA7pw/KZ21m3E1Q7c/AXrkKgOvDs5oicz8V17yZVxqanhTYU3HsFpSTEz6iE/09WHjkvtjt+VeLwZw==}
     engines: {bun: '>=1.1.0', node: '>=18'}
 
   '@deepseek-ai/cordis-plugin-include@1.0.6':
@@ -1394,7 +1394,7 @@ packages:
 
 snapshots:
 
-  '@codehz/ai@0.8.1': {}
+  '@codehz/ai@0.8.2': {}
 
   '@deepseek-ai/cordis-plugin-include@1.0.6(@deepseek-ai/cordis-plugin-loader@1.0.2)(@deepseek-ai/cordis@4.0.1)':
     dependencies:
