@@ -1,9 +1,8 @@
 /**
- * Harness request-history conversion into pi-ai's Context vocabulary.
+ * Harness request-history conversion into @codehz/ai input items.
  */
 import type { AttachmentStore } from "@deepseek-ai/dsh-attachment";
 import {
-  CallId,
   LlmError,
   contentHasImage,
   type ContentBlock,
@@ -11,28 +10,17 @@ import {
   type Message,
   type ToolResultBlock,
 } from "@deepseek-ai/dsh-llm";
-import type {
-  Context as PiContext,
-  ImageContent,
-  Message as PiMessage,
-  TextContent,
-  Tool,
-  ToolResultMessage,
-} from "@earendil-works/pi-ai";
-import { toPiAssistant } from "./replay.js";
-
-type UserContent = string | (TextContent | ImageContent)[];
+import type { ContentBlock as AiContentBlock, InputItem, ToolDefinition } from "@codehz/ai";
+import { toInputItems } from "./replay.js";
 
 function isToolResult(block: ContentBlock): block is ToolResultBlock {
   return block.type === "tool-result";
 }
 
-/** Join the text blocks of a harness message. */
 function flattenText(message: Message): string {
   return message.content.filter((block) => block.type === "text").map((block) => block.text).join("");
 }
 
-/** Flatten text recursively inside one tool result. */
 function toolResultText(blocks: readonly ContentBlock[]): string {
   return blocks.map((block) => {
     if (block.type === "text") return block.text;
@@ -41,178 +29,125 @@ function toolResultText(blocks: readonly ContentBlock[]): string {
   }).join("");
 }
 
-function userText(content: UserContent): PiMessage {
-  return { role: "user", content, timestamp: 0 };
-}
-
 function recordAssistant(
   message: Message,
   toolNames: Map<string, string>,
   onReplayDegrade?: (reason: string) => void,
-): PiMessage {
-  const assistant = toPiAssistant(message, onReplayDegrade);
-  for (const block of assistant.content) {
-    if (block.type === "toolCall") toolNames.set(CallId(block.id), block.name);
+): InputItem[] {
+  const items = toInputItems(message, onReplayDegrade);
+  for (const item of items) {
+    if (item.type === "tool_call") toolNames.set(item.id, item.name);
   }
-  return assistant;
+  return items;
 }
 
-function toolResultMessage(
+function toolResultItem(
   result: ToolResultBlock,
   toolNames: Map<string, string>,
-  content: (TextContent | ImageContent)[],
-): ToolResultMessage {
+  content: AiContentBlock[],
+): InputItem {
   return {
-    role: "toolResult",
-    toolCallId: result.toolCallId,
+    type: "tool_result",
+    callId: result.toolCallId,
     toolName: toolNames.get(result.toolCallId) ?? "unknown",
-    content,
-    isError: result.isError ?? false,
-    timestamp: 0,
+    outcome: result.isError ? "error" : "success",
+    content: content.length > 0 ? content : [{ type: "text", text: "(no output)" }],
   };
 }
 
-async function userContent(
+function imageDataUrl(data: Uint8Array, mediaType: string): string {
+  return "data:" + mediaType + ";base64," + Buffer.from(data).toString("base64");
+}
+
+async function userBlocks(
   blocks: readonly ContentBlock[],
-  attachments: AttachmentStore,
-): Promise<UserContent> {
-  const content: (TextContent | ImageContent)[] = [];
+  attachments: AttachmentStore | undefined,
+): Promise<AiContentBlock[]> {
+  const content: AiContentBlock[] = [];
   for (const block of blocks) {
     switch (block.type) {
       case "text":
         if (block.text.length > 0) content.push({ type: "text", text: block.text });
         break;
       case "image": {
+        if (attachments === undefined) {
+          throw new LlmError("custom-models image conversion requires the durable attachment service", "UNSUPPORTED_CONTENT");
+        }
         const stored = await attachments.readImage(block.attachment);
-        content.push({
-          type: "image",
-          data: Buffer.from(stored.data).toString("base64"),
-          mimeType: stored.ref.mediaType,
-        });
+        content.push({ type: "image", imageUrl: imageDataUrl(stored.data, stored.ref.mediaType) });
         break;
       }
       case "tool-result": {
-        const nested = await userContent(block.content, attachments);
-        if (typeof nested === "string") {
-          if (nested.length > 0) content.push({ type: "text", text: nested });
-        } else {
-          content.push(...nested);
-        }
+        content.push(...await userBlocks(block.content, attachments));
         break;
       }
       default:
         break;
     }
   }
-  if (content.every((block) => block.type === "text")) {
-    return content.map((block) => block.text).join("");
-  }
   return content;
 }
 
-function toolsOf(options: GenerateOptions): Tool[] | undefined {
+function toolsOf(options: GenerateOptions): ToolDefinition[] | undefined {
   return options.tools?.map((tool) => ({
     name: tool.name,
     description: tool.description,
-    parameters: tool.parameters as Tool["parameters"],
+    inputSchema: tool.parameters,
   }));
 }
 
-/** Assemble the request-level pi-ai context envelope shared by both conversion paths. */
-function piContext(options: GenerateOptions, messages: PiMessage[]): PiContext {
-  const tools = toolsOf(options);
-  return {
-    ...(options.system === undefined ? {} : { systemPrompt: options.system }),
-    messages,
-    ...(tools !== undefined && tools.length > 0 ? { tools } : {}),
-  };
+export interface ConvertedRequest {
+  instructions?: string;
+  input: InputItem[];
+  tools?: ToolDefinition[];
 }
 
-function textOnlyContext(
+export async function toAiRequest(
   options: GenerateOptions,
+  attachments: AttachmentStore | undefined,
   onReplayDegrade?: (reason: string) => void,
-): PiContext {
+): Promise<ConvertedRequest> {
   const toolNames = new Map<string, string>();
-  const messages: PiMessage[] = [];
-  for (const message of options.messages) {
-    if (contentHasImage(message.content)) {
-      throw new LlmError("pi-ai image conversion requires the durable attachment service", "UNSUPPORTED_CONTENT");
-    }
-    if (message.role === "system") {
-      messages.push(userText(flattenText(message)));
-      continue;
-    }
-    if (message.role === "assistant") {
-      messages.push(recordAssistant(message, toolNames, onReplayDegrade));
-      continue;
-    }
-    const text = flattenText(message);
-    const results = message.content.filter(isToolResult);
-    if (text.length > 0 || results.length === 0) messages.push(userText(text));
-    for (const result of results) {
-      messages.push(toolResultMessage(result, toolNames, [{
-        type: "text",
-        text: toolResultText(result.content) || "(no output)",
-      }]));
-    }
-  }
-  return piContext(options, messages);
-}
-
-async function toPiContextWithImages(
-  options: GenerateOptions,
-  attachments: AttachmentStore,
-  onReplayDegrade?: (reason: string) => void,
-): Promise<PiContext> {
-  const toolNames = new Map<string, string>();
-  const messages: PiMessage[] = [];
+  const input: InputItem[] = [];
   for (const message of options.messages) {
     if (message.role === "system") {
       if (contentHasImage(message.content)) {
-        throw new LlmError("pi-ai cannot represent an image in an in-history system message", "UNSUPPORTED_CONTENT");
+        throw new LlmError("custom-models cannot represent an image in an in-history system message", "UNSUPPORTED_CONTENT");
       }
-      messages.push(userText(flattenText(message)));
+      const text = flattenText(message);
+      if (text.length > 0) {
+        input.push({ type: "message", role: "user", content: [{ type: "text", text }] });
+      }
       continue;
     }
     if (message.role === "assistant") {
-      messages.push(recordAssistant(message, toolNames, onReplayDegrade));
+      input.push(...recordAssistant(message, toolNames, onReplayDegrade));
       continue;
     }
-    const content = await userContent(message.content.filter((block) => block.type !== "tool-result"), attachments);
     const results = message.content.filter(isToolResult);
-    if (content.length > 0 || results.length === 0) messages.push(userText(content));
+    const nonResults = message.content.filter((block) => block.type !== "tool-result");
+    const content = await userBlocks(nonResults, attachments);
+    if (content.length > 0 || results.length === 0) {
+      input.push({
+        type: "message",
+        role: "user",
+        content: content.length > 0 ? content : [{ type: "text", text: flattenText(message) }],
+      });
+    }
     for (const result of results) {
-      const resultContent = await userContent(result.content, attachments);
-      messages.push(toolResultMessage(
-        result,
-        toolNames,
-        typeof resultContent === "string"
-          ? [{ type: "text", text: resultContent || "(no output)" }]
-          : resultContent,
-      ));
+      const resultContent = await userBlocks(result.content, attachments);
+      if (resultContent.length === 0) {
+        const text = toolResultText(result.content);
+        input.push(toolResultItem(result, toolNames, [{ type: "text", text: text || "(no output)" }]));
+      } else {
+        input.push(toolResultItem(result, toolNames, resultContent));
+      }
     }
   }
-  return piContext(options, messages);
-}
-
-/** Convert text-only harness history to a synchronous pi-ai Context. */
-export function toPiContext(
-  options: GenerateOptions,
-  attachments?: undefined,
-  onReplayDegrade?: (reason: string) => void,
-): PiContext;
-/** Convert harness history to a pi-ai Context while resolving durable images. */
-export function toPiContext(
-  options: GenerateOptions,
-  attachments: AttachmentStore,
-  onReplayDegrade?: (reason: string) => void,
-): Promise<PiContext>;
-export function toPiContext(
-  options: GenerateOptions,
-  attachments?: AttachmentStore,
-  onReplayDegrade?: (reason: string) => void,
-): PiContext | Promise<PiContext> {
-  return attachments === undefined
-    ? textOnlyContext(options, onReplayDegrade)
-    : toPiContextWithImages(options, attachments, onReplayDegrade);
+  const tools = toolsOf(options);
+  return {
+    ...(options.system === undefined ? {} : { instructions: options.system }),
+    input,
+    ...(tools !== undefined && tools.length > 0 ? { tools } : {}),
+  };
 }

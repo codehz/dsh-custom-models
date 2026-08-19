@@ -272,9 +272,7 @@ describe("per-model reasoning defaults", () => {
 
   test("maps a DSH effort to a provider-specific wire spelling", () => {
     const normalized = normalizeConfig({ providers: { acme: baseProvider } });
-    const model = normalized.profiles.get("acme")?.piProvider
-      .getModels()
-      .find((candidate) => candidate.id === "acme-think");
+    const model = normalized.profiles.get("acme")?.modelsById.get("acme-think");
 
     expect(model?.thinkingLevelMap?.max).toBe("ultra");
     expect(model?.thinkingLevelMap?.medium).toBeNull();

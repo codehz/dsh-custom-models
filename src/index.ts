@@ -15,34 +15,29 @@ import {
 } from "@deepseek-ai/dsh-llm";
 import { discoverModels } from "./discovery.js";
 import {
-  PiAiAdapter,
-  type PiAiAdapterOptions,
-  type ResolvedPiAiProviderProfile,
+  CodehzAiAdapter,
+  type CodehzAiAdapterOptions,
+  type ResolvedProviderProfile,
 } from "./ai-adapter.js";
-import type { OpenAICompletionsCompat } from "@earendil-works/pi-ai";
-type PiAiCompatProfile = Pick<OpenAICompletionsCompat, "thinkingFormat" | "supportsReasoningEffort">;
-type PiAiThinkingFormat = NonNullable<PiAiCompatProfile["thinkingFormat"]>;
 import {
-  createProvider,
-  envApiKeyAuth,
-  lazyApi,
-  type Api,
-  type Model,
-  type ModelThinkingLevel,
-  type ProviderStreams,
+  THINKING_LEVELS,
+  type CompatProfile,
+  type ResolvedModel,
+  type SupportedApi,
+  type ThinkingFormat,
+  type ThinkingLevel,
   type ThinkingLevelMap,
-} from "@earendil-works/pi-ai";
+} from "./adapter/profile.js";
 
-const THINKING_LEVELS = [
-  "off", "minimal", "low", "medium", "high", "xhigh", "max",
-] as const satisfies readonly ModelThinkingLevel[];
+type PiAiCompatProfile = CompatProfile;
+type PiAiThinkingFormat = ThinkingFormat;
+
 const THINKING_LEVEL_SET = new Set<string>(THINKING_LEVELS);
 const SUPPORTED_APIS = ["openai-completions", "openai-responses"] as const;
 
-type SupportedApi = (typeof SUPPORTED_APIS)[number];
-type ModelDefaults = ReadonlyMap<string, ReadonlyMap<string, ModelThinkingLevel>>;
+type ModelDefaults = ReadonlyMap<string, ReadonlyMap<string, ThinkingLevel>>;
 
-export type ReasoningEfforts = Partial<Record<ModelThinkingLevel, string | null>>;
+export type ReasoningEfforts = Partial<Record<ThinkingLevel, string | null>>;
 
 export interface CustomModelProfile {
   id: string;
@@ -51,7 +46,7 @@ export interface CustomModelProfile {
   maxTokens?: number;
   input?: Array<"text" | "image">;
   reasoningEfforts?: false | ReasoningEfforts;
-  defaultReasoningEffort?: ModelThinkingLevel;
+  defaultReasoningEffort?: ThinkingLevel;
   compat?: PiAiCompatProfile;
 }
 
@@ -120,7 +115,7 @@ export const Config = z.object({
 }) as unknown as z<Config>;
 
 export interface NormalizedConfig {
-  profiles: ReadonlyMap<string, ResolvedPiAiProviderProfile>;
+  profiles: ReadonlyMap<string, ResolvedProviderProfile>;
   defaults: ModelDefaults;
 }
 
@@ -136,7 +131,7 @@ function positiveInteger(value: unknown, fallback: number, path: string): number
   return resolved;
 }
 
-function readDefault(provider: string, model: string, value: unknown): ModelThinkingLevel | undefined {
+function readDefault(provider: string, model: string, value: unknown): ThinkingLevel | undefined {
   if (value === undefined) return undefined;
   if (typeof value !== "string" || !THINKING_LEVEL_SET.has(value)) {
     throw new Error(
@@ -145,14 +140,14 @@ function readDefault(provider: string, model: string, value: unknown): ModelThin
       "; expected one of " + THINKING_LEVELS.join(", "),
     );
   }
-  return value as ModelThinkingLevel;
+  return value as ThinkingLevel;
 }
 
 function resolveReasoning(
   provider: string,
   model: string,
   efforts: false | ReasoningEfforts | undefined,
-): Pick<Model<Api>, "reasoning" | "thinkingLevelMap"> {
+): Pick<ResolvedModel, "reasoning" | "thinkingLevelMap"> {
   if (efforts === undefined || efforts === false) return { reasoning: false };
   if (!isRecord(efforts) || Object.keys(efforts).length === 0) {
     throw new Error(
@@ -206,17 +201,6 @@ function resolveReasoning(
   return { reasoning: true, thinkingLevelMap: map };
 }
 
-function streamsFor(api: SupportedApi): ProviderStreams {
-  if (api === "openai-completions") {
-    return lazyApi(() => import("@earendil-works/pi-ai/api/openai-completions"));
-  }
-  return lazyApi(() => import("@earendil-works/pi-ai/api/openai-responses"));
-}
-
-function zeroCost(): Model<Api>["cost"] {
-  return { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
-}
-
 function declaredCompat(compat: PiAiCompatProfile | undefined): PiAiCompatProfile | undefined {
   if (compat === undefined) return undefined;
   return compat.thinkingFormat === undefined && compat.supportsReasoningEffort === undefined
@@ -224,7 +208,7 @@ function declaredCompat(compat: PiAiCompatProfile | undefined): PiAiCompatProfil
     : compat;
 }
 
-/** Validate configuration and construct public pi-ai providers without private DSH imports. */
+/** Validate configuration into provider snapshots consumed by the @codehz/ai adapter. */
 export function normalizeConfig(config: Config = {}): NormalizedConfig {
   if (!isRecord(config)) throw new Error("dsh-custom-models: config must be an object");
   const rawProviders = config.providers;
@@ -233,8 +217,8 @@ export function normalizeConfig(config: Config = {}): NormalizedConfig {
     throw new Error("dsh-custom-models: config.providers must be an object");
   }
 
-  const profiles = new Map<string, ResolvedPiAiProviderProfile>();
-  const defaults = new Map<string, ReadonlyMap<string, ModelThinkingLevel>>();
+  const profiles = new Map<string, ResolvedProviderProfile>();
+  const defaults = new Map<string, ReadonlyMap<string, ThinkingLevel>>();
 
   for (const [provider, raw] of Object.entries(rawProviders)) {
     if (!isRecord(raw)) {
@@ -260,10 +244,10 @@ export function normalizeConfig(config: Config = {}): NormalizedConfig {
 
     const displayName = profile.displayName ?? provider;
     const providerCompat = declaredCompat(profile.compat);
-    const routeDefaults = new Map<string, ModelThinkingLevel>();
+    const routeDefaults = new Map<string, ThinkingLevel>();
     const configuredMaxTokens = new Map<string, number>();
     const seen = new Set<string>();
-    const models: Model<Api>[] = profile.models.map((entry, index) => {
+    const models: ResolvedModel[] = profile.models.map((entry, index) => {
       if (!isRecord(entry) || typeof entry.id !== "string" || entry.id.length === 0) {
         throw new Error(
           "dsh-custom-models: provider route '" + provider + "' models[" + index + "] needs id",
@@ -331,37 +315,19 @@ export function normalizeConfig(config: Config = {}): NormalizedConfig {
           "' compat is only valid for openai-completions",
         );
       }
+      const mergedCompat = api === "openai-completions"
+        ? declaredCompat({ ...providerCompat, ...modelCompat })
+        : undefined;
 
       return {
         id: entry.id,
         name: entry.name ?? entry.id,
-        api,
-        provider,
-        baseUrl: profile.baseURL,
         input: input ?? ["text"],
-        cost: zeroCost(),
         contextWindow,
         maxTokens,
         ...reasoning,
-        ...api === "openai-completions"
-          ? { compat: { ...providerCompat, ...modelCompat } }
-          : {},
-      } as Model<Api>;
-    });
-
-    const piProvider = createProvider({
-      id: provider,
-      name: displayName,
-      baseUrl: profile.baseURL,
-      ...(profile.headers === undefined ? {} : { headers: profile.headers }),
-      auth: {
-        apiKey: envApiKeyAuth(
-          displayName,
-          apiKeyEnv === undefined ? [] : [apiKeyEnv],
-        ),
-      },
-      models,
-      api: streamsFor(api),
+        ...(mergedCompat === undefined ? {} : { compat: mergedCompat }),
+      };
     });
 
     const streamIdleTimeoutMs = positiveInteger(
@@ -377,8 +343,9 @@ export function normalizeConfig(config: Config = {}): NormalizedConfig {
       streamIdleTimeoutMs,
       ...(profile.cacheRetention === undefined ? {} : { cacheRetention: profile.cacheRetention }),
       retryPolicy: resolveRetryPolicy(profile.retryPolicy, "providers." + provider + ".retryPolicy"),
-      piProvider,
       configuredMaxTokens,
+      models,
+      modelsById: new Map(models.map((model) => [model.id, model])),
       ...(apiKeyEnv === undefined ? {} : { apiKeyEnv }),
       ...(profile.headers === undefined ? {} : { headers: profile.headers }),
       ...(providerCompat === undefined ? {} : { compat: providerCompat }),
@@ -389,11 +356,11 @@ export function normalizeConfig(config: Config = {}): NormalizedConfig {
   return { profiles, defaults };
 }
 
-/** Official pi-ai transport with exact-model defaults layered into metadata. */
-export class PerModelReasoningPiAiAdapter extends PiAiAdapter {
+/** @codehz/ai transport with exact-model defaults layered into metadata. */
+export class PerModelReasoningPiAiAdapter extends CodehzAiAdapter {
   readonly #defaults: () => ModelDefaults;
 
-  constructor(options: PiAiAdapterOptions, defaults: ModelDefaults | (() => ModelDefaults)) {
+  constructor(options: CodehzAiAdapterOptions, defaults: ModelDefaults | (() => ModelDefaults)) {
     super(options);
     this.#defaults = typeof defaults === "function" ? defaults : () => defaults;
   }
@@ -435,7 +402,7 @@ export function apply(ctx: Context, config: Config = {}): void {
   let source = () => config;
   let normalized = normalizeConfig(config);
 
-  const resolveApiKey: PiAiAdapterOptions["resolveApiKey"] = async (provider, profile) => {
+  const resolveApiKey: CodehzAiAdapterOptions["resolveApiKey"] = async (provider, profile) => {
     const ref = profile.apiKeyEnv;
     if (ref === undefined) return undefined;
     const credentials = ctx.get("credentials");

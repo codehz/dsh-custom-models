@@ -1,13 +1,11 @@
 /**
- * Generic pi-ai-backed implementation of the Harness LLM seam.
+ * Generic @codehz/ai-backed implementation of the Harness LLM seam.
  *
- * Each resolution produces one immutable snapshot — the profiles plus a Models
- * collection holding the Provider each route built — and an operation captures
- * a whole snapshot before its first await. A configuration change builds a new
- * collection rather than mutating the one in use.
- *
- * Credentials stay outside that collection. The harness resolves a route's key
- * through its own seam and passes it as the request's apiKey option.
+ * Each resolution produces one immutable snapshot of validated profiles. A
+ * configuration change builds a new snapshot rather than mutating the one in
+ * use. Credentials stay outside that snapshot: the harness resolves a route's
+ * key through its own seam and this adapter constructs a fresh @codehz/ai
+ * client per request.
  */
 import { idleWatchdog, timeoutOf } from "@deepseek-ai/dsh-timeout";
 import {
@@ -21,34 +19,39 @@ import {
   type ResolvedRetryPolicy,
   type StreamChunk,
 } from "@deepseek-ai/dsh-llm";
-import { createModels, type Model, type Models } from "@earendil-works/pi-ai";
-import { toPiContext } from "./context.js";
-import type { PiAiAdapterOptions, ResolvedPiAiProviderProfile } from "./profile.js";
+import {
+  ChatCompletionsAdapter,
+  ResponsesAdapter,
+  createAIClient,
+} from "@codehz/ai";
+import { toAiRequest } from "./context.js";
+import type {
+  CodehzAiAdapterOptions,
+  ResolvedModel,
+  ResolvedProviderProfile,
+} from "./profile.js";
 import {
   applyPromptCacheKey,
-  describableReasoningLevel,
-  profileOptions,
+  reasoningExtraBody,
   reasoningInfo,
   requestHeaders,
   resolveReasoningLevel,
 } from "./request.js";
-import { toStreamChunks } from "./stream.js";
+import { mapThrownError, toStreamChunks } from "./stream.js";
 
 interface Snapshot {
-  profiles: ReadonlyMap<string, ResolvedPiAiProviderProfile>;
-  models: Models;
+  profiles: ReadonlyMap<string, ResolvedProviderProfile>;
 }
 
 /**
- * pi-ai-backed multi-provider adapter. Each operation reads the current
- * profiles, so a configuration change reaches the next request without a
- * restart; model descriptors come from the collection those profiles built.
+ * @codehz/ai-backed multi-provider adapter. Each operation reads the current
+ * profiles, so a configuration change reaches the next request without a restart.
  */
-export class PiAiAdapter extends LlmAdapter {
-  readonly #config: PiAiAdapterOptions;
+export class CodehzAiAdapter extends LlmAdapter {
+  readonly #config: CodehzAiAdapterOptions;
   #snapshot: Snapshot | undefined;
 
-  constructor(config: PiAiAdapterOptions) {
+  constructor(config: CodehzAiAdapterOptions) {
     super();
     this.#config = config;
   }
@@ -56,34 +59,32 @@ export class PiAiAdapter extends LlmAdapter {
   /**
    * The snapshot for the current profiles. Resolution memoizes its result, so
    * an unchanged configuration is recognized by identity; a changed one gets a
-   * brand-new collection, leaving any snapshot an operation already captured
+   * brand-new snapshot, leaving any snapshot an operation already captured
    * untouched for as long as that operation holds it.
    */
   #current(): Snapshot {
     const profiles = this.#config.profiles();
     if (this.#snapshot?.profiles === profiles) return this.#snapshot;
-    const models = createModels();
-    for (const profile of profiles.values()) models.setProvider(profile.piProvider);
-    this.#snapshot = { profiles, models };
+    this.#snapshot = { profiles };
     return this.#snapshot;
   }
 
   /** The profile for one route within one snapshot, or the not-owned failure. */
-  #profileOf(snapshot: Snapshot, provider: string): ResolvedPiAiProviderProfile {
+  #profileOf(snapshot: Snapshot, provider: string): ResolvedProviderProfile {
     const profile = snapshot.profiles.get(provider);
     if (profile === undefined) {
-      throw new LlmError("pi-ai adapter does not own provider \"" + provider + "\"", "NO_ADAPTER");
+      throw new LlmError("custom-models adapter does not own provider \"" + provider + "\"", "NO_ADAPTER");
     }
     return profile;
   }
 
   /** The configured descriptor for one exact route/model pair within one snapshot. */
-  #modelOf(snapshot: Snapshot, provider: string, model: string): Model<string> {
-    this.#profileOf(snapshot, provider);
-    const resolved = snapshot.models.getModel(provider, model);
+  #modelOf(snapshot: Snapshot, provider: string, model: string): ResolvedModel {
+    const profile = this.#profileOf(snapshot, provider);
+    const resolved = profile.modelsById.get(model);
     if (resolved === undefined) {
       throw new LlmError(
-        "pi-ai provider \"" + provider + "\" has no configured model \"" + model + "\"",
+        "custom-models provider \"" + provider + "\" has no configured model \"" + model + "\"",
         "UNKNOWN_MODEL",
       );
     }
@@ -103,8 +104,8 @@ export class PiAiAdapter extends LlmAdapter {
 
   override async listModels(provider: string): Promise<readonly LlmModelInfo[]> {
     const snapshot = this.#current();
-    this.#profileOf(snapshot, provider);
-    return snapshot.models.getModels(provider).map((model) => ({
+    const profile = this.#profileOf(snapshot, provider);
+    return profile.models.map((model) => ({
       provider,
       id: model.id,
       name: model.name,
@@ -120,7 +121,6 @@ export class PiAiAdapter extends LlmAdapter {
     const snapshot = this.#current();
     const profile = this.#profileOf(snapshot, provider);
     const resolvedModel = this.#modelOf(snapshot, provider, model);
-    const defaultLevel = describableReasoningLevel(resolvedModel, profile.reasoning);
     const configuredMaxTokens = profile.configuredMaxTokens.get(model);
     return {
       provider,
@@ -129,18 +129,18 @@ export class PiAiAdapter extends LlmAdapter {
       inputModalities: [...resolvedModel.input],
       context: { contextWindow: resolvedModel.contextWindow },
       ...(configuredMaxTokens === undefined ? {} : { defaultMaxTokens: configuredMaxTokens }),
-      ...reasoningInfo(resolvedModel, defaultLevel),
+      ...reasoningInfo(resolvedModel, undefined),
     };
   }
 
   override async *stream(options: GenerateOptions): AsyncGenerator<StreamChunk> {
     if (options.stop !== undefined) {
-      throw new LlmError("llm-pi-ai does not support GenerateOptions.stop", "UNSUPPORTED_OPTION");
+      throw new LlmError("custom-models does not support GenerateOptions.stop", "UNSUPPORTED_OPTION");
     }
     const snapshot = this.#current();
     const profile = this.#profileOf(snapshot, options.provider);
     const model = this.#modelOf(snapshot, options.provider, options.model);
-    const reasoning = resolveReasoningLevel(model, options.reasoningEffort ?? profile.reasoning);
+    const reasoning = resolveReasoningLevel(model, options.reasoningEffort);
     const apiKey = await this.#config.resolveApiKey(options.provider, profile);
     const consumer = new AbortController();
     const upstream = options.signal === undefined ? consumer.signal : AbortSignal.any([options.signal, consumer.signal]);
@@ -150,11 +150,11 @@ export class PiAiAdapter extends LlmAdapter {
       try {
         const containsImage = options.messages.some((message) => contentHasImage(message.content));
         if (containsImage && !model.input.includes("image")) {
-          throw new LlmError("pi-ai model \"" + model.id + "\" does not support image input", "UNSUPPORTED_CONTENT");
+          throw new LlmError("custom-models model \"" + model.id + "\" does not support image input", "UNSUPPORTED_CONTENT");
         }
         const attachments = containsImage ? this.#config.resolveAttachments?.() : undefined;
         if (containsImage && attachments === undefined) {
-          throw new LlmError("pi-ai image input requires the durable attachment service", "UNSUPPORTED_CONTENT");
+          throw new LlmError("custom-models image input requires the durable attachment service", "UNSUPPORTED_CONTENT");
         }
         const onReplayDegrade = (reason: string) => {
           this.#config.onReplayDegrade?.({
@@ -163,25 +163,41 @@ export class PiAiAdapter extends LlmAdapter {
             reason,
           });
         };
-        const context = attachments === undefined
-          ? toPiContext(options, undefined, onReplayDegrade)
-          : await toPiContext(options, attachments, onReplayDegrade);
+        const converted = await toAiRequest(options, attachments, onReplayDegrade);
+        const extraBody = applyPromptCacheKey(
+          reasoningExtraBody(profile, model, reasoning),
+          profile.api,
+          options.sessionId,
+          profile.cacheRetention,
+        );
+        const headers = requestHeaders(profile.headers);
+        const backendOptions = {
+          apiKey: apiKey ?? "",
+          baseUrl: profile.baseURL,
+          headers,
+          ...(Object.keys(extraBody).length === 0 ? {} : { extraBody }),
+        };
+        const backend = profile.api === "openai-responses"
+          ? new ResponsesAdapter(backendOptions)
+          : new ChatCompletionsAdapter(backendOptions);
+        const client = createAIClient({
+          adapter: backend,
+          model: options.model,
+          signal: watchdog.signal,
+        });
         const iterator = toStreamChunks(
-          snapshot.models.streamSimple(model, context, {
-            ...profileOptions(profile, reasoning, apiKey),
+          client.stream({
+            ...converted,
             ...(options.temperature === undefined ? {} : { temperature: options.temperature }),
-            ...(options.maxTokens === undefined ? {} : { maxTokens: options.maxTokens }),
-            ...(options.sessionId === undefined ? {} : { sessionId: String(options.sessionId) }),
-            onPayload: (payload) => applyPromptCacheKey(
-              payload,
-              model.api,
-              options.sessionId,
-              profile.cacheRetention,
-            ),
+            ...(options.maxTokens === undefined ? {} : { maxOutputTokens: options.maxTokens }),
             signal: watchdog.signal,
-            headers: requestHeaders(profile.headers),
           }),
-          model.contextWindow,
+          {
+            api: profile.api,
+            provider: options.provider,
+            model: options.model,
+            contextWindow: model.contextWindow,
+          },
         )[Symbol.asyncIterator]();
         let exhausted = false;
         try {
@@ -197,7 +213,7 @@ export class PiAiAdapter extends LlmAdapter {
           }
         } finally {
           if (!exhausted) {
-            consumer.abort("pi-ai stream consumer stopped");
+            consumer.abort("custom-models stream consumer stopped");
             try {
               await iterator.return?.(undefined);
             } catch {
@@ -208,20 +224,23 @@ export class PiAiAdapter extends LlmAdapter {
       } catch (error) {
         if (timeoutOf(watchdog.signal, "LLM_STREAM_IDLE_TIMEOUT") !== undefined) {
           throw new LlmError(
-            "pi-ai stream idle timeout after " + streamIdleTimeoutMs + "ms",
+            "custom-models stream idle timeout after " + streamIdleTimeoutMs + "ms",
             "TIMEOUT",
             { cause: error },
           );
         }
         if (options.signal?.aborted) {
-          throw new LlmError("pi-ai request aborted by caller", "ABORTED", { cause: error });
+          throw new LlmError("custom-models request aborted by caller", "ABORTED", { cause: error });
         }
-        throw error;
+        throw mapThrownError(error);
       } finally {
-        consumer.abort("pi-ai stream consumer stopped");
+        consumer.abort("custom-models stream consumer stopped");
       }
     } finally {
       watchdog[Symbol.dispose]();
     }
   }
 }
+
+/** @deprecated Use {@link CodehzAiAdapter}. */
+export class PiAiAdapter extends CodehzAiAdapter {}

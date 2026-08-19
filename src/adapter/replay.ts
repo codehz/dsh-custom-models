@@ -1,76 +1,44 @@
 /**
- * Durable pi-ai replay metadata and assistant-history reconstruction.
+ * Durable replay metadata and assistant-history reconstruction.
  *
  * Harness content remains the durable source for text and tool calls. This
  * module stores only the provider-native metadata needed to reconstruct a
- * pi-ai assistant message on a later request.
+ * @codehz/ai input item list on a later request.
  */
 import {
   LlmError,
   type Message,
-  type ModelMessageSource,
   type ReplayEnvelope,
 } from "@deepseek-ai/dsh-llm";
-import type {
-  Api,
-  AssistantMessage,
-  StopReason,
-  TextContent,
-  ThinkingContent,
-  ToolCall,
-  Usage,
-} from "@earendil-works/pi-ai";
+import type { InputItem, OpaqueItem, ReplayItem } from "@codehz/ai";
+import type { SupportedApi } from "./profile.js";
 
-const STOP_REASONS = new Set<StopReason>(["stop", "length", "toolUse", "error", "aborted"]);
+const STOP_REASONS = new Set([
+  "end_turn", "tool_call", "max_output_tokens", "content_filter", "error", "unknown",
+]);
 
-/** Per-block half of the pi-ai replay envelope, one entry per content block. */
-export type PiAiReplayBlock =
-  | { type: "text"; textSignature?: string }
-  | { type: "reasoning"; thinkingSignature?: string; redacted?: boolean }
-  | { type: "tool-call"; thoughtSignature?: string };
+export type NanoReplayBlock =
+  | { type: "text" }
+  | { type: "reasoning"; visibility?: "full" | "summary" | "redacted" | "opaque"; itemId?: string }
+  | { type: "tool-call" };
 
-/** Versioned response-level half of the pi-ai replay envelope. */
-export interface PiAiReplayResponse {
-  kind: "pi-ai";
-  version: 2;
-  api: Api;
+export interface NanoReplayResponse {
+  kind: "codehz-ai";
+  version: 1;
+  api: SupportedApi;
   provider: string;
   model: string;
-  responseModel?: string;
-  responseId?: string;
-  stopReason: StopReason;
+  stopReason?: string;
+  opaque?: OpaqueItem[];
 }
 
 interface ValidatedReplayState {
-  response: PiAiReplayResponse;
-  blocks: PiAiReplayBlock[];
-}
-
-/** Parse tool-call argument JSON; tolerate model malformations with {}. */
-export function parseArguments(raw: string): Record<string, unknown> {
-  try {
-    const parsed: unknown = JSON.parse(raw);
-    if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) {
-      return parsed as Record<string, unknown>;
-    }
-  } catch {}
-  return {};
-}
-
-/** Construct the zero usage value required by historical pi-ai messages. */
-function emptyPiUsage(): Usage {
-  return {
-    input: 0,
-    output: 0,
-    cacheRead: 0,
-    cacheWrite: 0,
-    totalTokens: 0,
-    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-  };
+  response: NanoReplayResponse;
+  blocks: NanoReplayBlock[];
 }
 
 function invalidReplay(message: string): never {
-  throw new LlmError("invalid pi-ai replay state: " + message, "INVALID_REPLAY_STATE");
+  throw new LlmError("invalid custom-models replay state: " + message, "INVALID_REPLAY_STATE");
 }
 
 function optionalString(value: unknown, label: string): string | undefined {
@@ -79,48 +47,64 @@ function optionalString(value: unknown, label: string): string | undefined {
   return value;
 }
 
-/**
- * Project a successful pi-ai response into the minimal durable replay state.
- * The per-block half is index-aligned with the streamed blocks (pi-ai content
- * order), so BlockAssembler prunes an entry with its block whenever assembly
- * removes one.
- */
-export function toPiReplayState(message: AssistantMessage): ReplayEnvelope {
+function isOpaqueItem(value: unknown): value is OpaqueItem {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const item = value as Record<string, unknown>;
+  return item.type === "opaque"
+    && typeof item.source === "string"
+    && (item.purpose === "replay" || item.purpose === "provider_state" || item.purpose === "unknown");
+}
+
+/** Project a successful @codehz/ai turn into the durable replay envelope. */
+export function toReplayState(options: {
+  api: SupportedApi;
+  provider: string;
+  model: string;
+  stopReason?: string;
+  replay: readonly ReplayItem[];
+}): ReplayEnvelope {
+  const blocks: NanoReplayBlock[] = [];
+  const opaque: OpaqueItem[] = [];
+  for (const item of options.replay) {
+    switch (item.type) {
+      case "message":
+        if (item.role === "assistant") {
+          for (const block of item.content) {
+            if (block.type === "text" || block.type === "json") blocks.push({ type: "text" });
+          }
+        }
+        break;
+      case "reasoning":
+        blocks.push({
+          type: "reasoning",
+          visibility: item.visibility,
+          ...(item.id === undefined ? {} : { itemId: item.id }),
+        });
+        break;
+      case "tool_call":
+        blocks.push({ type: "tool-call" });
+        break;
+      case "opaque":
+        opaque.push(item);
+        break;
+      default:
+        break;
+    }
+  }
   return {
     response: {
-      kind: "pi-ai",
-      version: 2,
-      api: message.api,
-      provider: message.provider,
-      model: message.model,
-      ...(message.responseModel === undefined ? {} : { responseModel: message.responseModel }),
-      ...(message.responseId === undefined ? {} : { responseId: message.responseId }),
-      stopReason: message.stopReason,
+      kind: "codehz-ai",
+      version: 1,
+      api: options.api,
+      provider: options.provider,
+      model: options.model,
+      ...(options.stopReason === undefined ? {} : { stopReason: options.stopReason }),
+      ...(opaque.length > 0 ? { opaque } : {}),
     },
-    blocks: message.content.map((block): PiAiReplayBlock => {
-      switch (block.type) {
-        case "text":
-          return {
-            type: "text",
-            ...(block.textSignature === undefined ? {} : { textSignature: block.textSignature }),
-          };
-        case "thinking":
-          return {
-            type: "reasoning",
-            ...(block.thinkingSignature === undefined ? {} : { thinkingSignature: block.thinkingSignature }),
-            ...(block.redacted === undefined ? {} : { redacted: block.redacted }),
-          };
-        case "toolCall":
-          return {
-            type: "tool-call",
-            ...(block.thoughtSignature === undefined ? {} : { thoughtSignature: block.thoughtSignature }),
-          };
-      }
-    }),
+    blocks,
   };
 }
 
-/** Validate the durable adapter-private envelope before it reaches pi-ai. */
 function readReplayState(value: unknown): ValidatedReplayState {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     return invalidReplay("expected a replay envelope");
@@ -131,22 +115,29 @@ function readReplayState(value: unknown): ValidatedReplayState {
     return invalidReplay("expected a response object");
   }
   const response = rawResponse as Record<string, unknown>;
-  if (response.kind !== "pi-ai") return invalidReplay("unknown state kind");
-  if (response.version !== 2) return invalidReplay("unsupported version " + String(response.version));
+  if (response.kind !== "codehz-ai") return invalidReplay("unknown state kind");
+  if (response.version !== 1) return invalidReplay("unsupported version " + String(response.version));
   for (const key of ["api", "provider", "model"] as const) {
     const field = response[key];
     if (typeof field !== "string" || field.length === 0) {
       return invalidReplay(key + " must be a non-empty string");
     }
   }
-  if (!STOP_REASONS.has(String(response.stopReason) as StopReason)) {
+  if (response.api !== "openai-completions" && response.api !== "openai-responses") {
+    return invalidReplay("unknown api");
+  }
+  if (response.stopReason !== undefined && !STOP_REASONS.has(String(response.stopReason))) {
     return invalidReplay("unknown stopReason");
   }
-  const responseModel = optionalString(response.responseModel, "responseModel");
-  const responseId = optionalString(response.responseId, "responseId");
+  const opaque = response.opaque;
+  if (opaque !== undefined) {
+    if (!Array.isArray(opaque) || !opaque.every(isOpaqueItem)) {
+      return invalidReplay("opaque must be an array of opaque items");
+    }
+  }
   const blocks = envelope.blocks;
   if (!Array.isArray(blocks)) return invalidReplay("blocks must be an array");
-  const validated: PiAiReplayBlock[] = [];
+  const validated: NanoReplayBlock[] = [];
   for (const [index, raw] of blocks.entries()) {
     if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
       return invalidReplay("block " + index + " must be an object");
@@ -156,170 +147,158 @@ function readReplayState(value: unknown): ValidatedReplayState {
     if (type !== "text" && type !== "reasoning" && type !== "tool-call") {
       return invalidReplay("block " + index + " has an unknown type");
     }
-    for (const signature of ["textSignature", "thinkingSignature", "thoughtSignature"] as const) {
-      if (block[signature] !== undefined && typeof block[signature] !== "string") {
-        return invalidReplay("block " + index + " " + signature + " must be a string");
-      }
-    }
-    if (block.redacted !== undefined && typeof block.redacted !== "boolean") {
-      return invalidReplay("block " + index + " redacted must be boolean");
-    }
-    if (type === "text") {
-      validated.push({
-        type,
-        ...(typeof block.textSignature === "string" ? { textSignature: block.textSignature } : {}),
-      });
-      continue;
-    }
     if (type === "reasoning") {
+      const visibility = block.visibility;
+      if (
+        visibility !== undefined
+        && visibility !== "full"
+        && visibility !== "summary"
+        && visibility !== "redacted"
+        && visibility !== "opaque"
+      ) {
+        return invalidReplay("block " + index + " visibility is invalid");
+      }
       validated.push({
         type,
-        ...(typeof block.thinkingSignature === "string" ? { thinkingSignature: block.thinkingSignature } : {}),
-        ...(typeof block.redacted === "boolean" ? { redacted: block.redacted } : {}),
+        ...(typeof visibility === "string" ? { visibility } : {}),
+        ...(typeof block.itemId === "string" ? { itemId: block.itemId } : {}),
       });
       continue;
     }
-    validated.push({
-      type,
-      ...(typeof block.thoughtSignature === "string" ? { thoughtSignature: block.thoughtSignature } : {}),
-    });
+    validated.push({ type });
   }
   return {
     response: {
-      kind: "pi-ai",
-      version: 2,
-      api: response.api as Api,
+      kind: "codehz-ai",
+      version: 1,
+      api: response.api,
       provider: response.provider as string,
       model: response.model as string,
-      ...(responseModel === undefined ? {} : { responseModel }),
-      ...(responseId === undefined ? {} : { responseId }),
-      stopReason: response.stopReason as StopReason,
+      ...(optionalString(response.stopReason, "stopReason") === undefined
+        ? {}
+        : { stopReason: String(response.stopReason) }),
+      ...(opaque === undefined ? {} : { opaque: opaque as OpaqueItem[] }),
     },
     blocks: validated,
   };
 }
 
-/** Convert provider-neutral blocks without trusting them as same-model replay. */
-function foreignAssistant(message: Message): AssistantMessage {
-  const source = message.source.kind === "model" ? message.source : undefined;
-  const content: AssistantMessage["content"] = [];
+type FlattenedAssistant =
+  | { type: "text"; text: string }
+  | { type: "reasoning"; text: string }
+  | { type: "tool-call"; id: string; name: string; arguments: string };
+
+function flattenAssistantContent(message: Message): FlattenedAssistant[] {
+  const content: FlattenedAssistant[] = [];
   for (const block of message.content) {
     switch (block.type) {
       case "text":
         content.push({ type: "text", text: block.text });
         break;
       case "reasoning":
-        content.push({ type: "thinking", thinking: block.text });
+        content.push({ type: "reasoning", text: block.text });
         break;
       case "tool-call":
         content.push({
-          type: "toolCall",
+          type: "tool-call",
           id: block.id,
           name: block.name,
-          arguments: parseArguments(block.arguments),
+          arguments: block.arguments,
         });
         break;
       case "image":
         throw new LlmError(
-          "pi-ai chat history cannot represent structured assistant image output",
+          "custom-models chat history cannot represent structured assistant image output",
           "UNSUPPORTED_CONTENT",
         );
       default:
         break;
     }
   }
-  return {
-    role: "assistant",
-    content,
-    api: "dsh-foreign",
-    provider: source?.provider ?? "dsh-foreign",
-    model: source?.model ?? "dsh-foreign",
-    usage: emptyPiUsage(),
-    stopReason: content.some((piece) => piece.type === "toolCall") ? "toolUse" : "stop",
-    timestamp: 0,
-  };
+  return content;
 }
 
-/** Recombine durable Harness content with validated pi-ai replay metadata. */
-function replayedAssistant(
-  message: Message,
-  source: ModelMessageSource,
-  rawState: unknown,
-): AssistantMessage {
-  const state = readReplayState(rawState);
-  if (state.response.provider !== source.provider) return invalidReplay("provider does not match assistant source");
-  if (state.response.model !== source.model) return invalidReplay("model does not match assistant source");
-  if (state.blocks.length !== message.content.length) return invalidReplay("block count does not match assistant content");
-  const content = message.content.map((block, index): TextContent | ThinkingContent | ToolCall => {
-    const replay = state.blocks[index];
-    if (replay === undefined || replay.type !== block.type) {
+function itemsFromAssistantContent(
+  content: FlattenedAssistant[],
+  replay?: ValidatedReplayState,
+): InputItem[] {
+  const items: InputItem[] = [];
+  let text: string[] = [];
+  const flushText = () => {
+    if (text.length === 0) return;
+    items.push({
+      type: "message",
+      role: "assistant",
+      content: [{ type: "text", text: text.join("") }],
+    });
+    text = [];
+  };
+  for (const [index, block] of content.entries()) {
+    const meta = replay?.blocks[index];
+    if (replay !== undefined && (meta === undefined || meta.type !== block.type)) {
       return invalidReplay("block " + index + " does not match assistant content");
     }
     switch (block.type) {
       case "text":
-        return {
-          type: "text",
-          text: block.text,
-          ...(replay.type === "text" && replay.textSignature !== undefined
-            ? { textSignature: replay.textSignature }
-            : {}),
-        };
+        text.push(block.text);
+        break;
       case "reasoning":
-        return {
-          type: "thinking",
-          thinking: block.text,
-          ...(replay.type === "reasoning" && replay.thinkingSignature !== undefined
-            ? { thinkingSignature: replay.thinkingSignature }
-            : {}),
-          ...(replay.type === "reasoning" && replay.redacted !== undefined ? { redacted: replay.redacted } : {}),
-        };
+        flushText();
+        items.push({
+          type: "reasoning",
+          visibility: meta?.type === "reasoning" ? (meta.visibility ?? "full") : "full",
+          ...(meta?.type === "reasoning" && meta.itemId !== undefined ? { id: meta.itemId } : {}),
+          content: [{ type: "text", text: block.text }],
+        });
+        break;
       case "tool-call":
-        return {
-          type: "toolCall",
+        flushText();
+        items.push({
+          type: "tool_call",
           id: block.id,
           name: block.name,
-          arguments: parseArguments(block.arguments),
-          ...(replay.type === "tool-call" && replay.thoughtSignature !== undefined
-            ? { thoughtSignature: replay.thoughtSignature }
-            : {}),
-        };
-      default:
-        return invalidReplay("block " + index + " has an unsupported Harness type");
+          argumentsText: block.arguments,
+        });
+        break;
     }
-  });
-  return {
-    role: "assistant",
-    content,
-    api: state.response.api,
-    provider: state.response.provider,
-    model: state.response.model,
-    ...(state.response.responseModel === undefined ? {} : { responseModel: state.response.responseModel }),
-    ...(state.response.responseId === undefined ? {} : { responseId: state.response.responseId }),
-    usage: emptyPiUsage(),
-    stopReason: state.response.stopReason,
-    timestamp: 0,
-  };
+  }
+  flushText();
+  if (replay?.response.opaque !== undefined) items.push(...replay.response.opaque);
+  return items;
 }
 
 /**
- * Convert one durable Harness assistant message into pi-ai history.
+ * Convert one durable Harness assistant message into @codehz/ai input items.
  *
  * Durable content is the authoritative record; replay metadata only restores
- * native fidelity (ids, signatures). A replay state this build cannot use
+ * native fidelity (ids, opaque payloads). A replay state this build cannot use
  * therefore degrades the one message to provider-neutral history instead of
  * failing the request.
  */
-export function toPiAssistant(
+export function toInputItems(
   message: Message,
   onDegrade?: (reason: string) => void,
-): AssistantMessage {
+): InputItem[] {
   const source = message.source;
-  if (source.kind !== "model" || source.replayState === undefined) return foreignAssistant(message);
+  const content = flattenAssistantContent(message);
+  if (source.kind !== "model" || source.replayState === undefined) {
+    return itemsFromAssistantContent(content);
+  }
   try {
-    return replayedAssistant(message, source, source.replayState);
+    const state = readReplayState(source.replayState);
+    if (state.response.provider !== source.provider) {
+      return invalidReplay("provider does not match assistant source");
+    }
+    if (state.response.model !== source.model) {
+      return invalidReplay("model does not match assistant source");
+    }
+    if (state.blocks.length !== content.length) {
+      return invalidReplay("block count does not match assistant content");
+    }
+    return itemsFromAssistantContent(content, state);
   } catch (error) {
     if (!(error instanceof LlmError) || error.code !== "INVALID_REPLAY_STATE") throw error;
     onDegrade?.(error.message);
-    return foreignAssistant(message);
+    return itemsFromAssistantContent(content);
   }
 }

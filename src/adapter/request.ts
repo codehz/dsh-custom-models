@@ -4,84 +4,59 @@ import {
   attributionHeaders,
   type LlmModelReasoningInfo,
 } from "@deepseek-ai/dsh-llm";
-import {
-  getSupportedThinkingLevels,
-  type CacheRetention,
-  type Model,
-  type ModelThinkingLevel,
-  type SimpleStreamOptions,
-} from "@earendil-works/pi-ai";
-import type { ResolvedPiAiProviderProfile } from "./profile.js";
+import type {
+  CacheRetention,
+  CompatProfile,
+  ResolvedModel,
+  ResolvedProviderProfile,
+  SupportedApi,
+  ThinkingFormat,
+  ThinkingLevel,
+  ThinkingLevelMap,
+} from "./profile.js";
 
-const PROMPT_CACHE_APIS = new Set(["openai-completions", "openai-responses"]);
+const PROMPT_CACHE_APIS = new Set<SupportedApi>(["openai-completions", "openai-responses"]);
+const THINKING_LEVEL_ORDER: readonly ThinkingLevel[] = [
+  "off", "minimal", "low", "medium", "high", "xhigh", "max",
+];
 
-/** Copy profile stream knobs into pi-ai's common option vocabulary. */
-export function profileOptions(
-  profile: ResolvedPiAiProviderProfile,
-  reasoning: ModelThinkingLevel | undefined,
-  apiKey: string | undefined,
-): SimpleStreamOptions {
-  const enabledReasoning = reasoning === "off" ? undefined : reasoning;
-  return {
-    maxRetries: 0,
-    ...(apiKey === undefined ? {} : { apiKey }),
-    ...(enabledReasoning === undefined ? {} : { reasoning: enabledReasoning }),
-    ...(profile.thinkingBudgets === undefined ? {} : { thinkingBudgets: profile.thinkingBudgets }),
-    ...(profile.cacheRetention === undefined ? {} : { cacheRetention: profile.cacheRetention }),
-    ...(profile.transport === undefined ? {} : { transport: profile.transport }),
-    ...(profile.timeoutMs === undefined ? {} : { timeoutMs: profile.timeoutMs }),
-    ...(profile.websocketConnectTimeoutMs === undefined
-      ? {}
-      : { websocketConnectTimeoutMs: profile.websocketConnectTimeoutMs }),
-  };
+export function supportedThinkingLevels(model: ResolvedModel): ThinkingLevel[] {
+  if (!model.reasoning) return [];
+  return THINKING_LEVEL_ORDER.filter((level) => {
+    const mapped = model.thinkingLevelMap?.[level];
+    if (mapped === null) return false;
+    if (level === "xhigh" || level === "max") return mapped !== undefined;
+    return true;
+  });
 }
 
-/**
- * The profile default this exact model can actually take, for DESCRIBING it.
- * A configured level the model does not support yields none rather than
- * throwing: resolveModel builds the model catalog, and a catalog that fails
- * takes its whole provider out of every picker.
- */
-export function describableReasoningLevel(
-  model: Model<string>,
-  effort: string | undefined,
-): ModelThinkingLevel | undefined {
-  if (effort === undefined) return undefined;
-  return getSupportedThinkingLevels(model).some((level) => level === effort)
-    ? effort as ModelThinkingLevel
-    : undefined;
-}
-
-/** Validate an explicit Harness/profile effort without invoking pi-ai's clamp. */
+/** Validate an explicit Harness/profile effort without silently clamping. */
 export function resolveReasoningLevel(
-  model: Model<string>,
+  model: ResolvedModel,
   effort: string | undefined,
-): ModelThinkingLevel | undefined {
+): ThinkingLevel | undefined {
   if (effort === undefined) return undefined;
-  if (getSupportedThinkingLevels(model).some((level) => level === effort)) {
-    return effort as ModelThinkingLevel;
+  if (supportedThinkingLevels(model).some((level) => level === effort)) {
+    return effort as ThinkingLevel;
   }
   throw new LlmError(
-    "pi-ai provider \"" + model.provider + "\" model \"" + model.id +
-      "\" does not support reasoning effort \"" + effort + "\"",
+    "custom-models provider \"" + model.id + "\" does not support reasoning effort \"" + effort + "\"",
     "UNSUPPORTED_REASONING_EFFORT",
   );
 }
 
 /**
  * Selectable reasoning efforts for one model, or nothing at all.
- * A model that carries no reasoning metadata is reported by pi-ai as supporting
- * the single level `off`. Omitting reasoning entirely is the seam's way of
- * saying the capability is unavailable.
+ * Omitting reasoning entirely is the seam's way of saying the capability is unavailable.
  */
 export function reasoningInfo(
-  model: Model<string>,
-  defaultLevel: ModelThinkingLevel | undefined,
+  model: ResolvedModel,
+  defaultLevel: ThinkingLevel | undefined,
 ): { reasoning: LlmModelReasoningInfo } | Record<string, never> {
   if (!model.reasoning) return {};
   return {
     reasoning: {
-      efforts: getSupportedThinkingLevels(model).map((level) => ({
+      efforts: supportedThinkingLevels(model).map((level) => ({
         id: ReasoningEffortId(level),
         name: level.charAt(0).toUpperCase() + level.slice(1),
       })),
@@ -100,14 +75,140 @@ export function requestHeaders(headers: Record<string, string> | undefined): Rec
   };
 }
 
-/** Write sessionId as prompt_cache_key for OpenAI-compatible APIs when caching is enabled. */
 export function applyPromptCacheKey(
-  payload: unknown,
-  api: string,
+  extraBody: Record<string, unknown>,
+  api: SupportedApi,
   sessionId: unknown,
   cacheRetention: CacheRetention | undefined,
-): unknown {
-  if (!PROMPT_CACHE_APIS.has(api) || sessionId === undefined || cacheRetention === "none") return;
-  if (typeof payload !== "object" || payload === null || Array.isArray(payload)) return;
-  return { ...payload, prompt_cache_key: String(sessionId) };
+): Record<string, unknown> {
+  if (!PROMPT_CACHE_APIS.has(api) || sessionId === undefined || cacheRetention === "none") {
+    return extraBody;
+  }
+  return { ...extraBody, prompt_cache_key: String(sessionId) };
 }
+
+function hostnameOf(baseURL: string): string {
+  try {
+    return new URL(baseURL).hostname.toLowerCase();
+  } catch {
+    return baseURL.toLowerCase();
+  }
+}
+
+function detectThinkingFormat(provider: string, baseURL: string): ThinkingFormat {
+  const host = hostnameOf(baseURL);
+  const id = provider.toLowerCase();
+  if (id.includes("deepseek") || host.includes("deepseek.com")) return "deepseek";
+  if (id.includes("zai") || host.includes("z.ai") || host.includes("bigmodel.cn")) return "zai";
+  if (id.includes("together") || host.includes("together.ai") || host.includes("together.xyz")) return "together";
+  if (id.includes("ant-ling") || host.includes("ant-ling.com")) return "ant-ling";
+  if (id.includes("openrouter") || host.includes("openrouter.ai")) return "openrouter";
+  if (id.includes("qwen") || host.includes("dashscope")) return "qwen";
+  return "openai";
+}
+
+function detectSupportsReasoningEffort(format: ThinkingFormat): boolean {
+  return format !== "zai" && format !== "together" && format !== "ant-ling" && format !== "qwen";
+}
+
+function resolvedCompat(
+  profile: ResolvedProviderProfile,
+  model: ResolvedModel,
+): Required<Pick<CompatProfile, "thinkingFormat" | "supportsReasoningEffort">> {
+  const format = model.compat?.thinkingFormat
+    ?? profile.compat?.thinkingFormat
+    ?? detectThinkingFormat(profile.provider, profile.baseURL);
+  return {
+    thinkingFormat: format,
+    supportsReasoningEffort: model.compat?.supportsReasoningEffort
+      ?? profile.compat?.supportsReasoningEffort
+      ?? detectSupportsReasoningEffort(format),
+  };
+}
+
+function mappedWire(map: ThinkingLevelMap | undefined, level: ThinkingLevel): string | undefined {
+  const mapped = map?.[level];
+  if (mapped === null) return undefined;
+  if (typeof mapped === "string" && mapped.length > 0) return mapped;
+  // `off: null` is stored as a missing key and means "supported by omitting the field".
+  if (level === "off") return undefined;
+  return level;
+}
+
+/**
+ * Map a DSH reasoning effort onto @codehz/ai extraBody fields.
+ * @codehz/ai only writes portable reasoning_effort / reasoning.effort;
+ * third-party dialects stay in extraBody so they override those keys.
+ */
+export function reasoningExtraBody(
+  profile: ResolvedProviderProfile,
+  model: ResolvedModel,
+  effort: ThinkingLevel | undefined,
+): Record<string, unknown> {
+  if (!model.reasoning) return {};
+  const enabled = effort !== undefined && effort !== "off";
+  const wire = enabled ? mappedWire(model.thinkingLevelMap, effort) : undefined;
+  const offWire = mappedWire(model.thinkingLevelMap, "off");
+  if (profile.api === "openai-responses") {
+    if (enabled && wire !== undefined) return { reasoning: { effort: wire } };
+    if (!enabled && model.thinkingLevelMap?.off !== null && offWire !== undefined) {
+      return { reasoning: { effort: offWire } };
+    }
+    return {};
+  }
+
+  const compat = resolvedCompat(profile, model);
+  switch (compat.thinkingFormat) {
+    case "zai":
+      return {
+        thinking: enabled ? { type: "enabled", clear_thinking: false } : { type: "disabled" },
+        ...(enabled && compat.supportsReasoningEffort && wire !== undefined
+          ? { reasoning_effort: wire }
+          : {}),
+      };
+    case "qwen":
+      return { enable_thinking: enabled };
+    case "deepseek":
+      return {
+        ...(enabled
+          ? { thinking: { type: "enabled" } }
+          : model.thinkingLevelMap?.off !== null
+            ? { thinking: { type: "disabled" } }
+            : {}),
+        ...(enabled && compat.supportsReasoningEffort && wire !== undefined
+          ? { reasoning_effort: wire }
+          : {}),
+      };
+    case "openrouter":
+      if (enabled && wire !== undefined) return { reasoning: { effort: wire } };
+      if (!enabled && model.thinkingLevelMap?.off !== null && offWire !== undefined) {
+        return { reasoning: { effort: offWire } };
+      }
+      return {};
+    case "ant-ling":
+      return enabled && wire !== undefined ? { reasoning: { effort: wire } } : {};
+    case "together":
+      return {
+        reasoning: { enabled },
+        ...(enabled && compat.supportsReasoningEffort && wire !== undefined
+          ? { reasoning_effort: wire }
+          : {}),
+      };
+    case "string-thinking":
+      if (enabled && wire !== undefined) return { thinking: wire };
+      if (!enabled && model.thinkingLevelMap?.off !== null && offWire !== undefined) {
+        return { thinking: offWire };
+      }
+      return {};
+    case "openai":
+    default:
+      if (enabled && compat.supportsReasoningEffort && wire !== undefined) {
+        return { reasoning_effort: wire };
+      }
+      if (!enabled && compat.supportsReasoningEffort && typeof model.thinkingLevelMap?.off === "string") {
+        return { reasoning_effort: model.thinkingLevelMap.off };
+      }
+      return {};
+  }
+}
+

@@ -1,9 +1,5 @@
 /**
- * pi-ai assistant event translation into the Harness streaming protocol.
- *
- * pi-ai tool-call arguments are parsed objects while the Harness keeps their
- * raw JSON representation. pi-ai also reports failures as terminal stream
- * events, which this module maps into Harness finish chunks.
+ * @codehz/ai event translation into the Harness streaming protocol.
  */
 import {
   CallId,
@@ -13,179 +9,298 @@ import {
   QUOTA_EXCEEDED_CODE,
   isContextWindowExceededError,
   isQuotaExceededError,
+  type ContentBlock,
   type FinishReason,
   type StreamChunk,
   type TokenUsage,
 } from "@deepseek-ai/dsh-llm";
 import {
-  isContextOverflow,
-  type AssistantMessage,
-  type AssistantMessageEvent,
-  type Usage as PiUsage,
-} from "@earendil-works/pi-ai";
-import { toPiReplayState } from "./replay.js";
+  AIError,
+  AIProviderError,
+  type AIStreamEvent,
+  type ReplayItem,
+  type StopReason,
+  type Usage as AiUsage,
+} from "@codehz/ai";
+import type { SupportedApi } from "./profile.js";
+import { toReplayState } from "./replay.js";
 
-/** Map pi-ai usage (reasoning folded into output by pi-ai). */
-export function mapUsage(usage: PiUsage): TokenUsage {
+export function mapUsage(usage: AiUsage | undefined): TokenUsage | undefined {
+  if (usage === undefined) return undefined;
+  const input = usage.inputTokens ?? 0;
+  const output = usage.outputTokens ?? 0;
+  const cacheRead = usage.cachedInputTokens ?? 0;
+  const uncachedInput = Math.max(0, input - cacheRead);
   return {
-    inputTokens: usage.input,
-    outputTokens: usage.output,
-    ...(usage.cacheRead > 0 ? { cacheReadTokens: usage.cacheRead } : {}),
-    ...(usage.cacheWrite > 0 ? { cacheWriteTokens: usage.cacheWrite } : {}),
+    inputTokens: uncachedInput,
+    outputTokens: output,
+    ...(cacheRead > 0 ? { cacheReadTokens: cacheRead } : {}),
+    ...(usage.cacheWriteInputTokens !== undefined && usage.cacheWriteInputTokens > 0
+      ? { cacheWriteTokens: usage.cacheWriteInputTokens }
+      : {}),
+    ...(usage.reasoningTokens !== undefined && usage.reasoningTokens > 0
+      ? { reasoningTokens: usage.reasoningTokens }
+      : {}),
   };
 }
 
-function classifyPiAiError(message: string): string {
-  if (/\b(?:401|403)\b/.test(message)) return "AUTH";
-  if (isQuotaExceededError(message)) return QUOTA_EXCEEDED_CODE;
-  if (/\b429\b|rate.?limit/i.test(message)) return "RATE_LIMIT";
-  if (/\b400\b|invalid.?request/i.test(message)) return "INVALID_REQUEST";
-  if (/\b5\d\d\b/.test(message)) return "SERVER";
-  if (/\btime(?:d)?\s*out\b|timeout/i.test(message)) return "TIMEOUT";
-  if (/stream ended (?:before|without)\b/i.test(message)) return "TRANSPORT";
+function classifyError(message: string, code?: string, status?: number): string {
+  if (code === "AUTH_ERROR" || status === 401 || status === 403) return "AUTH";
+  if (isQuotaExceededError(message) || /\bquota\b/i.test(code ?? "")) return QUOTA_EXCEEDED_CODE;
+  if (status === 429 || /rate.?limit/i.test(message) || code === "RATE_LIMIT") return "RATE_LIMIT";
+  if (status === 400 || /invalid.?request/i.test(message)) return "INVALID_REQUEST";
+  if (status !== undefined && status >= 500) return "SERVER";
+  if (/\btime(?:d)?\s*out\b|timeout/i.test(message) || code === "TIMEOUT" || code === "LOOKUP_TIMEOUT") {
+    return "TIMEOUT";
+  }
   if (
-    /\b(?:network|connection|socket|fetch)\b|\bECONN[A-Z]+\b/i.test(message) ||
-    /\b(?:other side closed|HTTP2 request did not get a response|WebSocket closed unexpectedly)\b/i.test(message) ||
-    /\bterminated\b|premature close/i.test(message)
+    /stream ended (?:before|without)\b/i.test(message)
+    || code === "STREAM_ERROR"
+    || code === "STREAM_PROTOCOL_ERROR"
+    || code === "STREAM_INCOMPLETE"
   ) {
     return "TRANSPORT";
   }
-  return "PI_AI_ERROR";
+  if (
+    /\b(?:network|connection|socket|fetch)\b|\bECONN[A-Z]+\b/i.test(message)
+    || /\b(?:other side closed|HTTP2 request did not get a response|WebSocket closed unexpectedly)\b/i.test(message)
+    || /\bterminated\b|premature close/i.test(message)
+  ) {
+    return "TRANSPORT";
+  }
+  return code && code.length > 0 ? code : "PROVIDER_ERROR";
 }
 
-/**
- * Map a terminal pi-ai event to the harness finish reason.
- * Recognized error text, stop usage above contextWindow, and zero-output
- * length usage that fills the window map to CONTEXT_WINDOW_EXCEEDED; a stop
- * with no content blocks maps to an EMPTY_RESPONSE error.
- */
-export function mapStopReason(message: AssistantMessage, contextWindow?: number): FinishReason {
-  const piAiOverflow = isContextOverflow(message, contextWindow);
-  const harnessOverflow = message.stopReason === "error"
-    && message.errorMessage !== undefined
-    && isContextWindowExceededError(message.errorMessage);
-  if (piAiOverflow || harnessOverflow) {
+function errorText(error: unknown): string {
+  if (error instanceof Error && error.message.length > 0) return error.message;
+  return String(error);
+}
+
+export function mapStopReason(
+  stopReason: StopReason | undefined,
+  options: {
+    model: string;
+    empty: boolean;
+    usage?: AiUsage;
+    contextWindow?: number;
+    errorMessage?: string;
+  },
+): FinishReason {
+  const overflowText = options.errorMessage ?? "";
+  const total = (options.usage?.inputTokens ?? 0) + (options.usage?.outputTokens ?? 0);
+  const overflow =
+    isContextWindowExceededError(overflowText)
+    || (options.contextWindow !== undefined && total >= options.contextWindow && (options.usage?.outputTokens ?? 0) === 0);
+  if (overflow) {
     return {
       kind: "error",
       failure: {
-        message: message.errorMessage ?? ("pi-ai detected context overflow for model \"" + message.model + "\""),
+        message: overflowText || ("custom-models detected context overflow for model \"" + options.model + "\""),
         code: CONTEXT_WINDOW_EXCEEDED_CODE,
       },
     };
   }
-  switch (message.stopReason) {
-    case "stop":
-      if (message.content.length === 0) {
+  switch (stopReason) {
+    case "tool_call":
+      return { kind: "tool-calls" };
+    case "max_output_tokens":
+      return { kind: "max-tokens" };
+    case "error":
+      return {
+        kind: "error",
+        failure: {
+          message: overflowText || "custom-models stream error",
+          code: classifyError(overflowText),
+        },
+      };
+    case "content_filter":
+      return {
+        kind: "error",
+        failure: {
+          message: overflowText || "custom-models content filter",
+          code: "CONTENT_FILTER",
+        },
+      };
+    case "end_turn":
+    case "unknown":
+    case undefined:
+      if (options.empty) {
         return {
           kind: "error",
           failure: {
-            message: "model \"" + message.model + "\" returned a completed response with no content",
+            message: "model \"" + options.model + "\" returned a completed response with no content",
             code: EMPTY_RESPONSE_CODE,
           },
         };
       }
       return { kind: "stop" };
-    case "length":
-      return { kind: "max-tokens" };
-    case "toolUse":
-      return { kind: "tool-calls" };
-    case "aborted":
-      return {
-        kind: "aborted",
-        failure: {
-          message: message.errorMessage ?? "pi-ai stream aborted",
-          code: "ABORTED",
-        },
-      };
-    case "error": {
-      const text = message.errorMessage ?? "pi-ai stream error";
-      return {
-        kind: "error",
-        failure: {
-          message: text,
-          code: classifyPiAiError(text),
-        },
-      };
-    }
+    default:
+      return { kind: "stop" };
   }
 }
 
-/**
- * Translate the pi-ai event stream into StreamChunks. pi-ai never throws
- * mid-stream — failures arrive as error events, which become error/aborted
- * finish chunks.
- */
+function textOf(block: { type: string; text?: string } | undefined): string {
+  return block?.type === "text" && typeof block.text === "string" ? block.text : "";
+}
+
+export function mapThrownError(error: unknown): LlmError {
+  if (error instanceof LlmError) return error;
+  const message = errorText(error);
+  const code = error instanceof AIError ? error.code : undefined;
+  const status = error instanceof AIProviderError ? error.statusCode : undefined;
+  if (error instanceof DOMException && error.name === "AbortError") {
+    return new LlmError("custom-models request aborted by caller", "ABORTED", { cause: error });
+  }
+  return new LlmError(
+    message,
+    classifyError(message, code, status),
+    { cause: error instanceof Error ? error : undefined },
+  );
+}
+
+interface OpenBlock {
+  index: number;
+  kind: "text" | "reasoning" | "tool-call";
+  text: string;
+  name: string;
+  ended: boolean;
+}
+
 export async function* toStreamChunks(
-  events: AsyncIterable<AssistantMessageEvent>,
-  contextWindow?: number,
+  events: AsyncIterable<AIStreamEvent>,
+  options: {
+    api: SupportedApi;
+    provider: string;
+    model: string;
+    contextWindow?: number;
+  },
 ): AsyncGenerator<StreamChunk> {
-  const toolIds = new Map<number, { id: string; name: string }>();
+  const blocks = new Map<string, OpenBlock>();
+  let nextIndex = 0;
+  let sawContent = false;
+  let lastUsage: AiUsage | undefined;
+
+  const open = (id: string, kind: OpenBlock["kind"], name = ""): OpenBlock => {
+    const existing = blocks.get(id);
+    if (existing !== undefined) return existing;
+    const opened: OpenBlock = { index: nextIndex++, kind, text: "", name, ended: false };
+    blocks.set(id, opened);
+    return opened;
+  };
+
+  const finish = function* (id: string): Generator<StreamChunk> {
+    const opened = blocks.get(id);
+    if (opened === undefined || opened.ended) return;
+    opened.ended = true;
+    let block: ContentBlock;
+    if (opened.kind === "text") block = { type: "text", text: opened.text };
+    else if (opened.kind === "reasoning") block = { type: "reasoning", text: opened.text };
+    else {
+      block = {
+        type: "tool-call",
+        id: CallId(id),
+        name: opened.name,
+        arguments: opened.text.length > 0 ? opened.text : "{}",
+      };
+    }
+    yield { type: "block-end", index: opened.index, block };
+  };
+
   for await (const event of events) {
     switch (event.type) {
-      case "start":
+      case "response.started":
+      case "response.warning":
         break;
-      case "text_start":
-        yield { type: "block-start", index: event.contentIndex, blockType: "text" };
+      case "response.auxiliary":
+        if (event.usage !== undefined) lastUsage = event.usage;
         break;
-      case "text_delta":
-        yield { type: "text-delta", index: event.contentIndex, text: event.delta };
-        break;
-      case "text_end":
-        yield { type: "block-end", index: event.contentIndex, block: { type: "text", text: event.content } };
-        break;
-      case "thinking_start":
-        yield { type: "block-start", index: event.contentIndex, blockType: "reasoning" };
-        break;
-      case "thinking_delta":
-        yield { type: "reasoning-delta", index: event.contentIndex, text: event.delta };
-        break;
-      case "thinking_end":
-        yield { type: "block-end", index: event.contentIndex, block: { type: "reasoning", text: event.content } };
-        break;
-      case "toolcall_start": {
-        const partial = event.partial.content[event.contentIndex];
-        const id = partial?.type === "toolCall" ? partial.id : "";
-        const name = partial?.type === "toolCall" ? partial.name : "";
-        toolIds.set(event.contentIndex, { id, name });
-        yield { type: "block-start", index: event.contentIndex, blockType: "tool-call" };
+      case "message.started": {
+        const opened = open(event.item.id, "text");
+        yield { type: "block-start", index: opened.index, blockType: "text" };
         break;
       }
-      case "toolcall_delta": {
-        const known = toolIds.get(event.contentIndex);
+      case "message.delta": {
+        const text = textOf(event.delta);
+        if (text.length === 0) break;
+        sawContent = true;
+        const opened = open(event.itemId, "text");
+        opened.text += text;
+        yield { type: "text-delta", index: opened.index, text };
+        break;
+      }
+      case "message.completed":
+        yield* finish(event.itemId);
+        break;
+      case "reasoning.started": {
+        const opened = open(event.item.id, "reasoning");
+        yield { type: "block-start", index: opened.index, blockType: "reasoning" };
+        break;
+      }
+      case "reasoning.delta": {
+        const text = textOf(event.delta);
+        if (text.length === 0) break;
+        sawContent = true;
+        const opened = open(event.itemId, "reasoning");
+        opened.text += text;
+        yield { type: "reasoning-delta", index: opened.index, text };
+        break;
+      }
+      case "reasoning.completed":
+        yield* finish(event.itemId);
+        break;
+      case "tool_call.started": {
+        sawContent = true;
+        const opened = open(event.item.id, "tool-call", event.item.name);
+        opened.name = event.item.name;
+        yield { type: "block-start", index: opened.index, blockType: "tool-call" };
+        break;
+      }
+      case "tool_call.delta": {
+        const delta = event.delta.argumentsText ?? "";
+        const opened = open(event.itemId, "tool-call");
+        opened.text += delta;
         yield {
           type: "tool-call-delta",
-          index: event.contentIndex,
-          id: CallId(known?.id ?? ""),
-          ...(known?.name !== undefined && known.name.length > 0 ? { name: known.name } : {}),
-          argumentsDelta: event.delta,
+          index: opened.index,
+          id: CallId(event.itemId),
+          ...(opened.name.length > 0 ? { name: opened.name } : {}),
+          argumentsDelta: delta,
         };
         break;
       }
-      case "toolcall_end":
-        yield {
-          type: "block-end",
-          index: event.contentIndex,
-          block: {
-            type: "tool-call",
-            id: CallId(event.toolCall.id),
-            name: event.toolCall.name,
-            arguments: JSON.stringify(event.toolCall.arguments),
-          },
-        };
+      case "tool_call.completed":
+        yield* finish(event.itemId);
         break;
-      case "done":
-        yield { type: "usage", usage: mapUsage(event.message.usage) };
+      case "response.completed": {
+        for (const id of blocks.keys()) yield* finish(id);
+        const replay = event.replay as ReplayItem[];
+        const usage = mapUsage(event.usage ?? lastUsage);
+        if (usage !== undefined) yield { type: "usage", usage };
+        const empty = !sawContent && !replay.some((item) => (
+          item.type === "message" || item.type === "reasoning" || item.type === "tool_call"
+        ));
+        const usageForFinish = event.usage ?? lastUsage;
         yield {
           type: "finish",
-          reason: mapStopReason(event.message, contextWindow),
-          replayState: toPiReplayState(event.message),
+          reason: mapStopReason(event.stopReason, {
+            model: options.model,
+            empty,
+            ...(usageForFinish === undefined ? {} : { usage: usageForFinish }),
+            ...(options.contextWindow === undefined ? {} : { contextWindow: options.contextWindow }),
+          }),
+          replayState: toReplayState({
+            api: options.api,
+            provider: options.provider,
+            model: options.model,
+            ...(event.stopReason === undefined ? {} : { stopReason: event.stopReason }),
+            replay,
+          }),
         };
         return;
-      case "error":
-        yield { type: "usage", usage: mapUsage(event.error.usage) };
-        yield { type: "finish", reason: mapStopReason(event.error, contextWindow) };
-        return;
+      }
+      default:
+        break;
     }
   }
-  throw new LlmError("pi-ai event stream ended without done/error", "STREAM_CLOSED");
+  throw new LlmError("custom-models event stream ended without response.completed", "STREAM_CLOSED");
 }

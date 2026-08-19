@@ -1,6 +1,6 @@
 # dsh-custom-models
 
-一个基于 **@earendil-works/pi-ai** 的 DSH 模型供应商扩展。它在包内实现 DSH LLM adapter，不依赖或 patch **@deepseek-ai/dsh-llm-pi-ai**，并补充了**每个模型的默认推理努力**和自定义供应商 prompt cache key 适配。
+一个基于 **@codehz/ai** 的 DSH 模型供应商扩展。它在包内实现 DSH LLM adapter，不依赖或 patch **@deepseek-ai/dsh-llm-pi-ai**，并补充了**每个模型的默认推理努力**和自定义供应商 prompt cache key 适配。
 
 ## 解决的问题
 
@@ -12,7 +12,7 @@ DSH 的请求运行时会在调用前验证所选推理努力。第三方模型�
 - **defaultReasoningEffort**：该模型在调用方没有指定时使用的默认等级；
 - **compat**：OpenAI completions 兼容端点的推理参数方言。
 
-默认值由模型元数据暴露给 DSH，随后由 **llm.prepareCall()** 写入已解析请求，因此会经过正常的能力校验、会话记录和官方 pi-ai wire 映射；扩展不会在请求发送后偷偷篡改参数。
+默认值由模型元数据暴露给 DSH，随后由 **llm.prepareCall()** 写入已解析请求，因此会经过正常的能力校验、会话记录和本包的 thinkingFormat / extraBody 映射；扩展不会在请求发送后偷偷篡改参数。
 
 ## 安装
 
@@ -75,7 +75,7 @@ dsh plugin --profile web add /home/codehz/Projects/dsh-custom-models
 
 ### reasoningEfforts
 
-键是 DSH/pi-ai 的标准等级：**off、minimal、low、medium、high、xhigh、max**。
+键是 DSH 的标准等级：**off、minimal、low、medium、high、xhigh、max**。
 
 值是第三方供应商实际接收的字符串。设置页默认按等级同名发送（`high → "high"`）；只有供应商拼写不同时才需要覆盖。只有 **off** 可以为 **null**，代表不发送推理参数。非推理模型请设为 **false**。
 
@@ -94,7 +94,7 @@ dsh plugin --profile web add /home/codehz/Projects/dsh-custom-models
 - 不要同时在内置“模型”设置页和本扩展中配置同一个 provider key；或
 - 为本扩展使用独立 route 名称，例如 **acme-reasoning**。
 
-API Key 在每次请求时动态读取：优先使用当前可用的 DSH credentials 服务；该服务不可用时，使用 DSH 启动环境快照（包括导出的环境变量和启动层）。引用名和值都会走 DSH 官方校验。设置页修改 credential 引用时不会自动删除旧引用，避免误删被其他配置复用的密钥；只有用户明确执行移除时才调用 credentials unset。底层协议请求仍由公开的 **@earendil-works/pi-ai** 实现；本包内的 adapter 负责 DSH 消息、流事件、附件、重放状态和归因头转换。对于 `openai-completions` 和 `openai-responses`，只要 DSH 提供 `sessionId` 且 `cacheRetention` 不是 `none`，adapter 就会原样写入 `prompt_cache_key`，不再依赖 `api.openai.com` 的 URL 特判，也不会自行 hash、拼接或截断 key。
+API Key 在每次请求时动态读取：优先使用当前可用的 DSH credentials 服务；该服务不可用时，使用 DSH 启动环境快照（包括导出的环境变量和启动层）。引用名和值都会走 DSH 官方校验。设置页修改 credential 引用时不会自动删除旧引用，避免误删被其他配置复用的密钥；只有用户明确执行移除时才调用 credentials unset。底层协议请求由 **@codehz/ai** 实现；本包内的 adapter 负责 DSH 消息、流事件、附件、重放状态、thinkingFormat extraBody 和归因头转换。对于 `openai-completions` 和 `openai-responses`，只要 DSH 提供 `sessionId` 且 `cacheRetention` 不是 `none`，adapter 就会原样写入 `prompt_cache_key`，不再依赖 `api.openai.com` 的 URL 特判，也不会自行 hash、拼接或截断 key。
 
 ## 开发
 
