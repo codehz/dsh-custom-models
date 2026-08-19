@@ -17,10 +17,11 @@ import { discoverModels } from "./discovery.js";
 import {
   PiAiAdapter,
   type PiAiAdapterOptions,
-  type PiAiCompatProfile,
-  type PiAiThinkingFormat,
   type ResolvedPiAiProviderProfile,
-} from "@deepseek-ai/dsh-llm-pi-ai";
+} from "./ai-adapter.js";
+import type { OpenAICompletionsCompat } from "@earendil-works/pi-ai";
+type PiAiCompatProfile = Pick<OpenAICompletionsCompat, "thinkingFormat" | "supportsReasoningEffort">;
+type PiAiThinkingFormat = NonNullable<PiAiCompatProfile["thinkingFormat"]>;
 import {
   createProvider,
   envApiKeyAuth,
@@ -62,6 +63,7 @@ export interface CustomProviderProfile {
   headers?: Record<string, string>;
   compat?: PiAiCompatProfile;
   streamIdleTimeoutMs?: number;
+  cacheRetention?: "none" | "short" | "long";
   retryPolicy?: RetryPolicyConfig;
   models: CustomModelProfile[];
 }
@@ -107,6 +109,7 @@ const providerSchema = z.object({
   headers: z.dict(z.string()),
   compat: compatSchema,
   streamIdleTimeoutMs: z.number().step(1).min(1),
+  cacheRetention: z.union(["none", "short", "long"] as const),
   retryPolicy: RetryPolicySchema,
   models: z.array(modelSchema),
 });
@@ -372,6 +375,7 @@ export function normalizeConfig(config: Config = {}): NormalizedConfig {
       api,
       baseURL: profile.baseURL,
       streamIdleTimeoutMs,
+      ...(profile.cacheRetention === undefined ? {} : { cacheRetention: profile.cacheRetention }),
       retryPolicy: resolveRetryPolicy(profile.retryPolicy, "providers." + provider + ".retryPolicy"),
       piProvider,
       configuredMaxTokens,

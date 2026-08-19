@@ -9,7 +9,6 @@ minimumReleaseAgeExclude:
   - '@deepseek-ai/dsh-credentials@0.1.0-rc.6'
   - '@deepseek-ai/dsh-invariants@0.1.0-rc.6'
   - '@deepseek-ai/dsh-launch-environment@0.1.0-rc.6'
-  - '@deepseek-ai/dsh-llm-pi-ai@0.1.0-rc.6'
   - '@deepseek-ai/dsh-llm@0.1.0-rc.6'
   - '@deepseek-ai/dsh-settings@0.1.0-rc.6'
   - '@deepseek-ai/dsh-timeout@0.1.0-rc.6'
