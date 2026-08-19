@@ -55,6 +55,25 @@ function isOpaqueItem(value: unknown): value is OpaqueItem {
     && (item.purpose === "replay" || item.purpose === "provider_state" || item.purpose === "unknown");
 }
 
+/**
+ * Detach an opaque item without copying optional fields whose value is undefined.
+ *
+ * @codehz/ai's item constructors include optional properties in the returned
+ * object (for example, `id: undefined`). That is harmless for normal JSON.stringify,
+ * which silently drops the property, but the session log deliberately validates
+ * lossless JSON and rejects it. Replay state is embedded in the terminal stream
+ * chunk, so it must already satisfy that stricter boundary.
+ */
+function durableOpaqueItem(item: OpaqueItem): OpaqueItem {
+  return {
+    type: "opaque",
+    ...(item.id === undefined ? {} : { id: item.id }),
+    source: item.source,
+    purpose: item.purpose,
+    payload: item.payload,
+  };
+}
+
 /** Project a successful @codehz/ai turn into the durable replay envelope. */
 export function toReplayState(options: {
   api: SupportedApi;
@@ -85,7 +104,7 @@ export function toReplayState(options: {
         blocks.push({ type: "tool-call" });
         break;
       case "opaque":
-        opaque.push(item);
+        opaque.push(durableOpaqueItem(item));
         break;
       default:
         break;

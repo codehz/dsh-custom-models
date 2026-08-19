@@ -3,7 +3,7 @@ import { CallId, LlmError, type Message, type MessageSource } from "@deepseek-ai
 import type { ReplayItem } from "@codehz/ai";
 import { toInputItems, toReplayState } from "../src/adapter/replay.js";
 import { applyPromptCacheKey, resolveReasoningLevel } from "../src/adapter/request.js";
-import { mapStopReason, mapUsage } from "../src/adapter/stream.js";
+import { mapStopReason, mapUsage, toStreamChunks } from "../src/adapter/stream.js";
 import type { ResolvedModel } from "../src/adapter/profile.js";
 
 const usage = {
@@ -53,6 +53,30 @@ function harnessMessage(
 }
 
 describe("replay reconstruction", () => {
+  test("omits undefined optional fields from opaque replay state", () => {
+    const replayState = toReplayState({
+      api: "openai-completions",
+      provider: "acme",
+      model: "think",
+      replay: [{
+        type: "opaque",
+        id: undefined,
+        source: "chat.completions",
+        purpose: "replay",
+        payload: { reasoning_content: "plan" },
+      } as unknown as ReplayItem],
+    });
+    const response = replayState.response as { opaque?: unknown[] };
+    const opaque = response.opaque?.[0] as Record<string, unknown>;
+    expect(opaque).toEqual({
+      type: "opaque",
+      source: "chat.completions",
+      purpose: "replay",
+      payload: { reasoning_content: "plan" },
+    });
+    expect(Object.hasOwn(opaque, "id")).toBe(false);
+  });
+
   test("round-trips opaque payloads and degrades a mismatched envelope", () => {
     const replayState = toReplayState({
       api: "openai-completions",
@@ -109,7 +133,52 @@ describe("replay reconstruction", () => {
   });
 });
 
+function hasUndefined(value: unknown): boolean {
+  if (value === undefined) return true;
+  if (typeof value !== "object" || value === null) return false;
+  if (Array.isArray(value)) return value.some(hasUndefined);
+  return Object.values(value).some(hasUndefined);
+}
+
 describe("stream mapping", () => {
+  test("keeps tool-call stream chunks losslessly JSON-serializable", async () => {
+    const events = [
+      { type: "tool_call.started", item: { id: "call-tool", name: "run_code" } },
+      { type: "tool_call.delta", itemId: "call-tool", delta: { argumentsText: "{}" } },
+      { type: "tool_call.completed", itemId: "call-tool" },
+      {
+        type: "response.completed",
+        stopReason: "tool_call",
+        replay: [
+          { type: "tool_call", id: "call-tool", name: "run_code", argumentsText: "{}" },
+          {
+            type: "opaque",
+            id: undefined,
+            source: "chat.completions",
+            purpose: "replay",
+            payload: { reasoning_content: "plan" },
+          },
+        ],
+      },
+    ] as never[];
+    async function* input() {
+      yield* events;
+    }
+
+    const chunks = [];
+    for await (const chunk of toStreamChunks(input(), {
+      api: "openai-completions",
+      provider: "acme",
+      model: "think",
+    })) {
+      chunks.push(chunk);
+    }
+
+    expect(chunks.some((chunk) => chunk.type === "tool-call-delta")).toBe(true);
+    expect(chunks.some((chunk) => chunk.type === "block-end" && chunk.block.type === "tool-call")).toBe(true);
+    expect(hasUndefined(chunks)).toBe(false);
+  });
+
   test("maps usage and empty-stop to EMPTY_RESPONSE", () => {
     expect(mapUsage(usage)).toEqual({ inputTokens: 1, outputTokens: 2, cacheReadTokens: 3 });
     expect(mapStopReason("end_turn", { model: "think", empty: true })).toEqual({
