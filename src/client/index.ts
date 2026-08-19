@@ -15,11 +15,15 @@ export function apply(ctx:ClientContext):void{
  const style=document.createElement('style');style.dataset.dshCustomModels='';style.textContent=styles;document.head.append(style);ctx.effect(()=>()=>style.remove());
  ctx.effect(()=>ctx.locale.register(NS,{zh,en}));
  const api=(ctx as ClientContext & {connection:{api:IApiClient}}).connection.api;const refresh=()=>{void reload(api)};
+ const remote = ctx.remote as {
+  $on(event: 'settings/document-updated', listener: (ns: string) => void): () => void
+  $on(event: 'credentials/updated' | 'llm/adapters-updated', listener: () => void): () => void
+ };
  ctx.effect(() => {
   const disposers = [
-   ctx.remote.$on('settings/document-updated', (ns) => { if (ns === 'custom-models') refresh() }),
-   ctx.remote.$on('credentials/updated', refresh),
-   ctx.remote.$on('llm/adapters-updated', refresh),
+   remote.$on('settings/document-updated', (ns) => { if (ns === 'custom-models') refresh() }),
+   remote.$on('credentials/updated', refresh),
+   remote.$on('llm/adapters-updated', refresh),
    ctx.on('connection/reset', refresh),
   ];
   return () => { for (const dispose of disposers) dispose() };
