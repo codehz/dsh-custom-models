@@ -94,7 +94,7 @@ dsh plugin --profile web add /home/codehz/Projects/dsh-custom-models
 - 不要同时在内置“模型”设置页和本扩展中配置同一个 provider key；或
 - 为本扩展使用独立 route 名称，例如 **acme-reasoning**。
 
-API Key 在每次请求时动态读取：优先使用当前可用的 DSH credentials 服务；该服务不可用时，使用 DSH 启动环境快照（包括导出的环境变量和启动层）。引用名和值都会走 DSH 官方校验。设置页修改 credential 引用时不会自动删除旧引用，避免误删被其他配置复用的密钥；只有用户明确执行移除时才调用 credentials unset。底层协议请求仍由公开的 **@earendil-works/pi-ai** 实现；本包内的 adapter 负责 DSH 消息、流事件、附件、重放状态和归因头转换。对于 `openai-completions`，只要 DSH 提供 `sessionId` 且 `cacheRetention` 不是 `none`，adapter 就会原样写入 `prompt_cache_key`，不再依赖 `api.openai.com` 的 URL 特判，也不会自行 hash 或拼接 key。
+API Key 在每次请求时动态读取：优先使用当前可用的 DSH credentials 服务；该服务不可用时，使用 DSH 启动环境快照（包括导出的环境变量和启动层）。引用名和值都会走 DSH 官方校验。设置页修改 credential 引用时不会自动删除旧引用，避免误删被其他配置复用的密钥；只有用户明确执行移除时才调用 credentials unset。底层协议请求仍由公开的 **@earendil-works/pi-ai** 实现；本包内的 adapter 负责 DSH 消息、流事件、附件、重放状态和归因头转换。对于 `openai-completions` 和 `openai-responses`，只要 DSH 提供 `sessionId` 且 `cacheRetention` 不是 `none`，adapter 就会原样写入 `prompt_cache_key`，不再依赖 `api.openai.com` 的 URL 特判，也不会自行 hash、拼接或截断 key。
 
 ## 开发
 

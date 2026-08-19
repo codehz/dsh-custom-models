@@ -62,7 +62,11 @@ test("sends the model-specific reasoning effort wire value", async () => {
   }
 });
 
-async function captureAdapterPayload(cacheRetention: "none" | "short" | undefined, sessionId: unknown) {
+async function captureAdapterPayload(
+  cacheRetention: "none" | "short" | undefined,
+  sessionId: unknown,
+  api: "openai-completions" | "openai-responses" = "openai-completions",
+) {
   let payload: Record<string, unknown> | undefined;
   const server = Bun.serve({
     port: 0,
@@ -73,7 +77,7 @@ async function captureAdapterPayload(cacheRetention: "none" | "short" | undefine
     },
   });
   try {
-    const normalized = normalizeConfig({ providers: { wire: { baseURL: server.url.toString() + "v1", ...(cacheRetention === undefined ? {} : { cacheRetention }), models: [{ id: "chat" }] } } });
+    const normalized = normalizeConfig({ providers: { wire: { api, baseURL: server.url.toString() + "v1", ...(cacheRetention === undefined ? {} : { cacheRetention }), models: [{ id: "chat" }] } } });
     const { PerModelReasoningPiAiAdapter } = await import("../src/index.js");
     const adapter = new PerModelReasoningPiAiAdapter({ profiles: () => normalized.profiles, resolveApiKey: async () => "test-key" }, normalized.defaults);
     for await (const _chunk of adapter.stream({ provider: "wire", model: "chat", system: "system", messages: [{ role: "user", content: [{ type: "text", text: "hello" }] }], sessionId } as never)) {}
@@ -93,5 +97,16 @@ test("local adapter sends sessionId verbatim as prompt_cache_key for short cache
 
 test("local adapter omits prompt_cache_key when cacheRetention is none", async () => {
   const payload = await captureAdapterPayload("none", "session-raw");
+  expect(payload).not.toHaveProperty("prompt_cache_key");
+});
+
+test("local adapter sends a long sessionId verbatim for openai-responses", async () => {
+  const sessionId = "responses-session-" + "x".repeat(80);
+  const payload = await captureAdapterPayload(undefined, sessionId, "openai-responses");
+  expect(payload?.prompt_cache_key).toBe(sessionId);
+});
+
+test("local adapter omits the Responses cache key when cacheRetention is none", async () => {
+  const payload = await captureAdapterPayload("none", "responses-session", "openai-responses");
   expect(payload).not.toHaveProperty("prompt_cache_key");
 });

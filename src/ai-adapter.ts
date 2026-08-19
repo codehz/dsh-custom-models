@@ -918,7 +918,8 @@ var PiAiAdapter: {
 					...options.maxTokens === void 0 ? {} : { maxTokens: options.maxTokens },
 					...options.sessionId === void 0 ? {} : { sessionId: String(options.sessionId) },
 					onPayload: (payload) => {
-						if (model.api !== "openai-completions" || options.sessionId === void 0 || profile.cacheRetention === "none") return;
+						const supportsPromptCacheKey = model.api === "openai-completions" || model.api === "openai-responses";
+						if (!supportsPromptCacheKey || options.sessionId === void 0 || profile.cacheRetention === "none") return;
 						if (typeof payload !== "object" || payload === null || Array.isArray(payload)) return;
 						return { ...payload, prompt_cache_key: String(options.sessionId) };
 					},
