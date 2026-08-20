@@ -82,6 +82,17 @@ export function adoptDiscoveredModels(
   return [...byId.values()];
 }
 
+/** Move one model row to another position without mutating the source array. */
+export function moveModel(models: readonly ModelDraft[], fromIndex: number, toIndex: number): ModelDraft[] {
+  if (fromIndex === toIndex || fromIndex < 0 || toIndex < 0 || fromIndex >= models.length || toIndex >= models.length) {
+    return [...models];
+  }
+  const next = [...models];
+  const [moved] = next.splice(fromIndex, 1);
+  if (moved !== undefined) next.splice(toIndex, 0, moved);
+  return next;
+}
+
 export function providersOf(layer: unknown): Record<string, unknown> {
   return record(record(layer).providers);
 }

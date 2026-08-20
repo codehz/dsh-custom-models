@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { Config as ConfigSchema, normalizeConfig, type CustomProviderProfile } from "../src/index.js";
-import { adoptDiscoveredModels, providerFromValue, providerToValue } from "../src/client/model-utils.js";
+import { adoptDiscoveredModels, moveModel, providerFromValue, providerToValue } from "../src/client/model-utils.js";
 import {
   customEffortCount,
   enableEffort,
@@ -150,6 +150,16 @@ describe("client provider editor", () => {
       expect.objectContaining({ id: "keep", name: "Kept" }),
       expect.objectContaining({ id: "new", name: "New", contextWindow: "256K", maxTokens: "32K" }),
     ]);
+  });
+
+  test("moves model rows without mutating the original order", () => {
+    const draft = emptyProvider();
+    draft.models[0]!.id = "first";
+    draft.models.push({ ...emptyProvider().models[0]!, id: "second" });
+    draft.models.push({ ...emptyProvider().models[0]!, id: "third" });
+
+    expect(moveModel(draft.models, 0, 2).map((model) => model.id)).toEqual(["second", "third", "first"]);
+    expect(draft.models.map((model) => model.id)).toEqual(["first", "second", "third"]);
   });
 
   test("treats schema-materialized empty input as inherited text", () => {

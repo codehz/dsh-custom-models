@@ -3,7 +3,7 @@ import { Button, Modal } from "@deepseek-ai/dsh-client-ui-primitives";
 import type { CredentialView, DiscoveredModelView, IApiClient } from "@deepseek-ai/dsh-api-remotes/client";
 import type { TranslateNS } from "@deepseek-ai/dsh-client-locale/client";
 import { ModelEditor } from "./ModelEditor.js";
-import { adoptDiscoveredModels } from "./model-utils.js";
+import { adoptDiscoveredModels, moveModel } from "./model-utils.js";
 import { validationKey } from "./locales.js";
 import { describeError } from "./store.js";
 import { deriveKeyRef } from "./validation.js";
@@ -79,6 +79,8 @@ export function ProviderEditor(props: ProviderEditorProps) {
   const [customOpen, setCustomOpen] = useState(mode === "create");
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [expandedModels, setExpandedModels] = useState<ReadonlySet<number>>(() => new Set());
+  const [draggedModel, setDraggedModel] = useState<number | null>(null);
+  const [dropTarget, setDropTarget] = useState<number | null>(null);
   const toggleModel = (index: number) => {
     setExpandedModels((current) => {
       const next = new Set(current);
@@ -96,6 +98,30 @@ export function ProviderEditor(props: ProviderEditorProps) {
       }
       return next;
     });
+  };
+  const reorderModels = (fromIndex: number, toIndex: number) => {
+    if (fromIndex === toIndex) return;
+    props.onChange((value) => { value.models = moveModel(value.models, fromIndex, toIndex); });
+    setExpandedModels((current) => {
+      const next = new Set<number>();
+      for (const at of current) {
+        if (at === fromIndex) next.add(toIndex);
+        else if (fromIndex < toIndex && at > fromIndex && at <= toIndex) next.add(at - 1);
+        else if (toIndex < fromIndex && at >= toIndex && at < fromIndex) next.add(at + 1);
+        else next.add(at);
+      }
+      return next;
+    });
+  };
+  const handleDragOver = (index: number, event: React.DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "move";
+    setDropTarget(index);
+  };
+  const handleDrop = (index: number) => {
+    if (draggedModel !== null) reorderModels(draggedModel, index);
+    setDraggedModel(null);
+    setDropTarget(null);
   };
   useEffect(() => {
     if (hasCustomErrors) setCustomOpen(true);
@@ -255,7 +281,7 @@ export function ProviderEditor(props: ProviderEditorProps) {
     </div>
     {draft.models.length === 0 ? <p className="cm-model-empty">{t("modelsEmpty")}</p> : null}
     {draft.models.map((model, index) => <ModelEditor
-      key={(mode === "create" ? "new" : draft.route) + ":" + index}
+      key={(mode === "create" ? "new" : draft.route) + ":" + (model.id || "empty-" + index)}
       model={model}
       index={index}
       api={draft.api}
@@ -266,6 +292,11 @@ export function ProviderEditor(props: ProviderEditorProps) {
       onChange={(next) => props.onChange((value) => { value.models[index] = next; })}
       onToggle={() => toggleModel(index)}
       onRemove={() => removeModel(index)}
+      onDragStart={() => setDraggedModel(index)}
+      onDragEnd={() => { setDraggedModel(null); setDropTarget(null); }}
+      onDragOver={(event) => handleDragOver(index, event)}
+      onDrop={() => handleDrop(index)}
+      dropTarget={dropTarget === index && draggedModel !== index}
     />)}
     <button
       type="button"

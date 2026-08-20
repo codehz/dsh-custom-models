@@ -374,9 +374,19 @@ textarea.cm-input {
 }
 .cm-model-row {
   display: grid;
-  grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr) auto auto;
+  grid-template-columns: auto minmax(0, 1.4fr) minmax(0, 1fr) auto auto;
   align-items: center;
   gap: 6px;
+}
+.cm-model-entry-drop-target {
+  border-color: var(--dsw-alias-state-business-primary);
+  box-shadow: inset 0 2px 0 var(--dsw-alias-state-business-primary);
+}
+.cm-drag-handle {
+  cursor: grab;
+}
+.cm-drag-handle:active {
+  cursor: grabbing;
 }
 .cm-icon {
   display: inline-flex;
@@ -507,8 +517,8 @@ textarea.cm-input {
   padding: 0;
 }
 @media (max-width: 640px) {
-  .cm-model-row { grid-template-columns: minmax(0, 1fr) auto auto; }
-  .cm-model-row .cm-input:nth-child(2) { grid-column: 1 / -1; grid-row: 2; }
+  .cm-model-row { grid-template-columns: auto minmax(0, 1fr) auto auto; }
+  .cm-model-row .cm-input:nth-child(2) { grid-column: 2 / -1; grid-row: 2; }
   .cm-override-list { grid-template-columns: 1fr; }
   .cm-override-list .cm-field { grid-column: auto; }
   .cm-row-head { flex-wrap: wrap; }

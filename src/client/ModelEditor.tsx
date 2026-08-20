@@ -30,6 +30,11 @@ interface Props {
   onChange: (model: ModelDraft) => void;
   onToggle: () => void;
   onRemove: () => void;
+  onDragStart: () => void;
+  onDragEnd: () => void;
+  onDragOver: (event: React.DragEvent<HTMLDivElement>) => void;
+  onDrop: () => void;
+  dropTarget: boolean;
 }
 
 function Field({
@@ -64,8 +69,15 @@ function IconTrash() {
   </svg>;
 }
 
+function IconGrip() {
+  return <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden>
+    <path d="M5 3.5h.01M5 8h.01M5 12.5h.01M11 3.5h.01M11 8h.01M11 12.5h.01" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" />
+  </svg>;
+}
+
 export function ModelEditor({
   model, index, api, disabled, expanded, errors, t, onChange, onToggle, onRemove,
+  onDragStart, onDragEnd, onDragOver, onDrop, dropTarget,
 }: Props) {
   const path = "models." + index;
   const hasErrors = Object.keys(errors).some((key) => key === path || key.startsWith(path + "."));
@@ -90,8 +102,28 @@ export function ModelEditor({
   useEffect(() => {
     if (overrideErrors.length > 0) setOverrideOpen(true);
   }, [overrideErrors.length]);
-  return <div className="cm-model-entry">
+  return <div
+    className={"cm-model-entry" + (dropTarget ? " cm-model-entry-drop-target" : "")}
+    onDragOver={onDragOver}
+    onDrop={onDrop}
+  >
     <div className="cm-model-row">
+      <button
+        type="button"
+        className="cm-icon cm-drag-handle"
+        draggable={!disabled}
+        aria-label={t("reorderModel") + " " + (index + 1)}
+        title={t("reorderModel")}
+        disabled={disabled}
+        onDragStart={(event) => {
+          event.dataTransfer.effectAllowed = "move";
+          event.dataTransfer.setData("text/plain", String(index));
+          onDragStart();
+        }}
+        onDragEnd={onDragEnd}
+      >
+        <IconGrip />
+      </button>
       <input
         className="cm-input"
         value={model.id}
