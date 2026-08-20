@@ -7,6 +7,7 @@ import { adoptDiscoveredModels } from "./model-utils.js";
 import { validationKey } from "./locales.js";
 import { describeError } from "./store.js";
 import { deriveKeyRef } from "./validation.js";
+import { parseHeaders, serializeHeaders } from "./form-utils.js";
 import {
   THINKING_FORMATS,
   emptyCompat,
@@ -321,16 +322,11 @@ export function ProviderEditor(props: ProviderEditorProps) {
         <textarea
           className="cm-input"
           rows={4}
-          value={draft.headers.map(({ key, value }) => key + ": " + value).join("\n")}
+          value={serializeHeaders(draft.headers)}
           aria-label={t("headers")}
           disabled={disabled}
           onChange={(event) => props.onChange((value) => {
-            value.headers = event.target.value.split("\n").filter(Boolean).map((line) => {
-              const separator = line.indexOf(":");
-              return separator < 0
-                ? { key: line.trim(), value: "" }
-                : { key: line.slice(0, separator).trim(), value: line.slice(separator + 1).trim() };
-            });
+            value.headers = parseHeaders(event.target.value);
           })}
         />
       </Field>

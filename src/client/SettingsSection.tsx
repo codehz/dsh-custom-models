@@ -33,16 +33,24 @@ function IconPlus() {
   </svg>;
 }
 
+interface EditorState {
+  editing: string | undefined;
+  draft: ProviderDraft | undefined;
+  secret: string;
+  message: string;
+}
+
+function emptyEditorState(): EditorState {
+  return { editing: undefined, draft: undefined, secret: "", message: "" };
+}
+
 const subscribeSettings = settingsStore.subscribe.bind(settingsStore);
 const getSettingsSnapshot = settingsStore.getSnapshot.bind(settingsStore);
 
 export function SettingsSection({ api, t }: Props) {
   const snapshot = useSyncExternalStore(subscribeSettings, getSettingsSnapshot);
-  const [editing, setEditing] = useState<string | "new">();
-  const [draft, setDraft] = useState<ProviderDraft>();
-  const [secret, setSecret] = useState("");
+  const [{ editing, draft, secret, message }, setEditorState] = useState<EditorState>(emptyEditorState);
   const [busy, setBusy] = useState(false);
-  const [message, setMessage] = useState("");
   const [pageError, setPageError] = useState("");
   const [confirmDelete, setConfirmDelete] = useState<string>();
   const [saved, setSaved] = useState<string>();
@@ -58,8 +66,7 @@ export function SettingsSection({ api, t }: Props) {
   useEffect(() => {
     if (editing === undefined || editing === "new") return;
     if (!Object.hasOwn(layers.resolved, editing)) {
-      setEditing(undefined);
-      setDraft(undefined);
+      setEditorState(emptyEditorState());
     }
   }, [editing, layers.resolved]);
 
@@ -73,34 +80,36 @@ export function SettingsSection({ api, t }: Props) {
   const selectedHasUserOverride = selectedRoute !== undefined && Object.hasOwn(layers.user, selectedRoute);
 
   const edit = (change: (value: ProviderDraft) => void) => {
-    setDraft((current) => {
-      if (current === undefined) return current;
-      const next = structuredClone(current);
-      change(next);
-      return next;
+    setEditorState((current) => {
+      if (current.draft === undefined) return current;
+      const draft = structuredClone(current.draft);
+      change(draft);
+      return { ...current, draft };
     });
   };
+  const setEditorSecret = (secret: string) => {
+    setEditorState((current) => ({ ...current, secret }));
+  };
+  const setEditorMessage = (message: string) => {
+    setEditorState((current) => ({ ...current, message }));
+  };
   const open = (route: string) => {
-    setEditing(route);
-    setDraft(providerFromValue(route, layers.resolved[route]));
-    setSecret("");
-    setMessage("");
+    setEditorState({
+      editing: route,
+      draft: providerFromValue(route, layers.resolved[route]),
+      secret: "",
+      message: "",
+    });
     setPageError("");
     setSaved(undefined);
   };
   const startNew = () => {
-    setEditing("new");
-    setDraft(emptyProvider());
-    setSecret("");
-    setMessage("");
+    setEditorState({ editing: "new", draft: emptyProvider(), secret: "", message: "" });
     setPageError("");
     setSaved(undefined);
   };
   const closeEditor = () => {
-    setEditing(undefined);
-    setDraft(undefined);
-    setSecret("");
-    setMessage("");
+    setEditorState(emptyEditorState());
   };
   const toggle = (route: string) => {
     if (editing === route) closeEditor();
@@ -131,7 +140,7 @@ export function SettingsSection({ api, t }: Props) {
       routeCollision
     ) return;
     setBusy(true);
-    setMessage("");
+    setEditorMessage("");
     let profileSaved = false;
     try {
       const response = await api.settings.mutate({
@@ -149,16 +158,16 @@ export function SettingsSection({ api, t }: Props) {
       profileSaved = true;
       if (secret !== "") {
         responseValue(await api.credentials.set({ ref: keyRef, value: secret }));
-        setSecret("");
+        setEditorSecret("");
       }
       await reload(api);
       setSaved(draft.displayName || draft.route);
       closeEditor();
     } catch (error) {
       const detail = describeError(error);
-      if (profileSaved) setMessage(t("credentialPartial") + " " + detail);
-      else if (detail.toLowerCase().includes("conflict")) setMessage(t("conflict"));
-      else setMessage(detail);
+      if (profileSaved) setEditorMessage(t("credentialPartial") + " " + detail);
+      else if (detail.toLowerCase().includes("conflict")) setEditorMessage(t("conflict"));
+      else setEditorMessage(detail);
     } finally {
       setBusy(false);
     }
@@ -188,12 +197,12 @@ export function SettingsSection({ api, t }: Props) {
   async function unsetKey(): Promise<void> {
     if (credential?.writable !== true) return;
     setBusy(true);
-    setMessage("");
+    setEditorMessage("");
     try {
       responseValue(await api.credentials.unset({ ref: keyRef }));
       await reload(api);
     } catch (error) {
-      setMessage(describeError(error));
+      setEditorMessage(describeError(error));
     } finally {
       setBusy(false);
     }
@@ -205,7 +214,7 @@ export function SettingsSection({ api, t }: Props) {
     mode={editing === "new" ? "create" : "edit"}
     credential={credential}
     secret={secret}
-    onSecretChange={setSecret}
+    onSecretChange={setEditorSecret}
     onUnsetKey={() => { void unsetKey(); }}
     disabled={disabled}
     busy={busy}

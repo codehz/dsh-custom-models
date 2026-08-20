@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import { Pill } from "@deepseek-ai/dsh-client-ui-primitives";
 import type { TranslateNS } from "@deepseek-ai/dsh-client-locale/client";
 import { validationKey } from "./locales.js";
+import { updateDraft } from "./form-utils.js";
 import {
   customEffortCount,
   defaultWire,
@@ -76,8 +77,7 @@ export function ModelEditor({
     return key === undefined ? undefined : t(key);
   };
   const update = (change: (draft: ModelDraft) => void) => {
-    const next = structuredClone(model);
-    change(next);
+    const next = updateDraft(model, change);
     onChange(next);
   };
   const efforts = model.reasoningEfforts;
