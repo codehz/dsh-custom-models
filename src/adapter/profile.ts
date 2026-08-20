@@ -8,7 +8,7 @@ export const THINKING_LEVELS = [
 
 export type ThinkingLevel = (typeof THINKING_LEVELS)[number];
 export type ThinkingLevelMap = Partial<Record<ThinkingLevel, string | null>>;
-export type SupportedApi = "openai-completions" | "openai-responses";
+export type SupportedApi = "openai-completions" | "openai-responses" | "messages" | "ollama" | "gemini";
 export type ThinkingFormat =
   | "openai"
   | "deepseek"

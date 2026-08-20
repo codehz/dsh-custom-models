@@ -128,7 +128,9 @@ export function providerFromValue(route: string, value: unknown): ProviderDraft 
     route,
     displayName: text(source.displayName),
     apiKeyEnv: text(source.apiKeyEnv),
-    api: source.api === "openai-responses" ? "openai-responses" : "openai-completions",
+    api: source.api === "openai-responses" || source.api === "messages" || source.api === "ollama" || source.api === "gemini"
+      ? source.api
+      : "openai-completions",
     baseURL: text(source.baseURL),
     headers: Object.entries(record(source.headers)).map(([key, header]) => ({
       key,

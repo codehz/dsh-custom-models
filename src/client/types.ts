@@ -1,4 +1,4 @@
-export type ApiKind = "openai-completions" | "openai-responses";
+export type ApiKind = "openai-completions" | "openai-responses" | "messages" | "ollama" | "gemini";
 export type Effort = "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 export type ThinkingFormat = "openai" | "deepseek" | "openrouter" | "together" | "zai" | "qwen" | "string-thinking" | "ant-ling";
 export type EffortMap = Partial<Record<Effort, string | null>>;

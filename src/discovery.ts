@@ -6,7 +6,7 @@ import {
   type LlmModelDiscoveryRequest,
 } from "@deepseek-ai/dsh-llm";
 
-const LISTABLE_PROTOCOLS = new Set(["openai-completions", "openai-responses"]);
+const LISTABLE_PROTOCOLS = new Set(["openai-completions", "openai-responses", "messages", "ollama", "gemini"]);
 const MAX_RESPONSE_BYTES = 4 * 1024 * 1024;
 
 function capacity(...candidates: unknown[]): number | undefined {

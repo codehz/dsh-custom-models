@@ -147,13 +147,16 @@ export function ProviderEditor(props: ProviderEditorProps) {
         disabled={disabled}
         onChange={(event) => props.onChange((value) => {
           value.api = event.target.value as ProviderDraft["api"];
-          if (value.api === "openai-responses") {
+          if (value.api !== "openai-completions") {
             for (const model of value.models) model.compat = emptyCompat();
           }
         })}
       >
         <option value="openai-completions">openai-completions</option>
         <option value="openai-responses">openai-responses</option>
+        <option value="messages">messages (Anthropic)</option>
+        <option value="ollama">ollama</option>
+        <option value="gemini">gemini</option>
       </select>
     </Field>
   </>;

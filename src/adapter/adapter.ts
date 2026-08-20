@@ -21,6 +21,9 @@ import {
 } from "@deepseek-ai/dsh-llm";
 import {
   ChatCompletionsAdapter,
+  GeminiAdapter,
+  MessagesAdapter,
+  OllamaAdapter,
   ResponsesAdapter,
   createAIClient,
 } from "@codehz/ai";
@@ -175,7 +178,13 @@ export class CodehzAiAdapter extends LlmAdapter {
         };
         const backend = profile.api === "openai-responses"
           ? new ResponsesAdapter(backendOptions)
-          : new ChatCompletionsAdapter(backendOptions);
+          : profile.api === "messages"
+            ? new MessagesAdapter(backendOptions)
+            : profile.api === "ollama"
+              ? new OllamaAdapter(backendOptions)
+              : profile.api === "gemini"
+                ? new GeminiAdapter(backendOptions)
+                : new ChatCompletionsAdapter(backendOptions);
         const client = createAIClient({
           adapter: backend,
           model: options.model,

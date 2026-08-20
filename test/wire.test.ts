@@ -38,6 +38,48 @@ function responsesBody(): string {
   ].join("");
 }
 
+test("routes Messages requests to the Anthropic endpoint", async () => {
+  let payload: Record<string, unknown> | undefined;
+  let pathname = "";
+  const server = Bun.serve({
+    port: 0,
+    async fetch(request) {
+      pathname = new URL(request.url).pathname;
+      payload = await request.json() as Record<string, unknown>;
+      return new Response('event: message_start\ndata: {"message":{"id":"m","role":"assistant","content":[]}}\n\nevent: message_stop\ndata: {}\n\n', { headers: { "content-type": "text/event-stream" } });
+    },
+  });
+  try {
+    const normalized = normalizeConfig({ providers: { wire: { api: "messages", baseURL: server.url.toString() + "v1", models: [{ id: "claude" }] } } });
+    const adapter = new PerModelReasoningPiAiAdapter({ profiles: () => normalized.profiles, resolveApiKey: async () => "test-key" }, normalized.defaults);
+    for await (const _chunk of adapter.stream({ provider: "wire", model: "claude", messages: [{ role: "user", content: [{ type: "text", text: "hello" }] }] } as never)) {}
+    expect(pathname).toBe("/v1/messages");
+    expect(payload?.model).toBe("claude");
+    expect(payload?.messages).toEqual([{ role: "user", content: "hello" }]);
+  } finally {
+    server.stop(true);
+  }
+});
+
+test("routes Ollama requests to the api/chat endpoint", async () => {
+  let pathname = "";
+  const server = Bun.serve({
+    port: 0,
+    fetch(request) {
+      pathname = new URL(request.url).pathname;
+      return new Response(JSON.stringify({ message: { role: "assistant", content: "ok" }, done: true }), { headers: { "content-type": "application/json" } });
+    },
+  });
+  try {
+    const normalized = normalizeConfig({ providers: { wire: { api: "ollama", baseURL: server.url.toString(), models: [{ id: "llama" }] } } });
+    const adapter = new PerModelReasoningPiAiAdapter({ profiles: () => normalized.profiles, resolveApiKey: async () => undefined }, normalized.defaults);
+    for await (const _chunk of adapter.stream({ provider: "wire", model: "llama", messages: [{ role: "user", content: [{ type: "text", text: "hello" }] }] } as never)) {}
+    expect(pathname).toBe("/api/chat");
+  } finally {
+    server.stop(true);
+  }
+});
+
 test("sends the model-specific reasoning effort wire value", async () => {
   let payload: Record<string, unknown> | undefined;
   const server = Bun.serve({

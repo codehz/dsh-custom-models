@@ -33,7 +33,7 @@ type PiAiCompatProfile = CompatProfile;
 type PiAiThinkingFormat = ThinkingFormat;
 
 const THINKING_LEVEL_SET = new Set<string>(THINKING_LEVELS);
-const SUPPORTED_APIS = ["openai-completions", "openai-responses"] as const;
+const SUPPORTED_APIS = ["openai-completions", "openai-responses", "messages", "ollama", "gemini"] as const;
 
 type ModelDefaults = ReadonlyMap<string, ReadonlyMap<string, ThinkingLevel>>;
 

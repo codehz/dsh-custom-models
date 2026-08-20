@@ -164,6 +164,24 @@ export function reasoningExtraBody(
     return {};
   }
 
+  if (profile.api === "messages") {
+    if (!enabled) return { thinking: { type: "disabled" } };
+    const budget = wire !== undefined && /^\\d+$/.test(wire) ? Number(wire) : 4096;
+    return { thinking: { type: "enabled", budget_tokens: budget } };
+  }
+
+  if (profile.api === "ollama") {
+    if (!enabled) return { think: false };
+    return { think: wire === "low" || wire === "medium" || wire === "high" ? wire : true };
+  }
+
+  if (profile.api === "gemini") {
+    if (!enabled) return { generationConfig: { thinkingConfig: { includeThoughts: false } } };
+    const level = (wire ?? effort ?? "medium").toUpperCase();
+    const thinkingLevel = level === "MINIMAL" || level === "LOW" || level === "MEDIUM" || level === "HIGH" ? level : "MEDIUM";
+    return { generationConfig: { thinkingConfig: { includeThoughts: true, thinkingLevel } } };
+  }
+
   const compat = resolvedCompat(profile, model);
   switch (compat.thinkingFormat) {
     case "zai":
