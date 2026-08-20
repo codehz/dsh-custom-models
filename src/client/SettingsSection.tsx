@@ -286,7 +286,7 @@ export function SettingsSection({ api, t }: Props) {
       </ul>}
       <div className="cm-add-block">
         {editing === "new" && editor !== null
-          ? <div className="cm-add-card">{editor}</div>
+          ? <div className="cm-row-card">{editor}</div>
           : <button
             type="button"
             className="cm-add-button"

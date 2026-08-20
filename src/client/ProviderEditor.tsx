@@ -64,17 +64,18 @@ export function ProviderEditor(props: ProviderEditorProps) {
     return key === undefined ? undefined : t(key);
   };
   const errorKeys = Object.keys(validation?.errors ?? {});
-  const hasCustomErrors = validation !== undefined && (
-    validation.errors.baseURL !== undefined
+  const hasCustomErrors = routeCollision || (validation !== undefined && (
+    validation.errors.route !== undefined
+    || validation.errors.baseURL !== undefined
     || validation.errors.models !== undefined
     || errorKeys.some((path) => path.startsWith("models."))
-  );
+  ));
   const hasAdvancedErrors = validation !== undefined && (
     validation.errors.apiKeyEnv !== undefined
     || validation.errors.streamIdleTimeoutMs !== undefined
     || errorKeys.some((path) => path.startsWith("headers.") || path.startsWith("retryPolicy."))
   );
-  const [customOpen, setCustomOpen] = useState(false);
+  const [customOpen, setCustomOpen] = useState(mode === "create");
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [expandedModels, setExpandedModels] = useState<ReadonlySet<number>>(() => new Set());
   const toggleModel = (index: number) => {
@@ -450,26 +451,19 @@ export function ProviderEditor(props: ProviderEditorProps) {
       </span>
       {mode === "edit" && draft.route !== "" ? <span className="cm-editor-route">{draft.route}</span> : null}
     </div>
-    {mode === "edit" ? <>
-      {keyField}
-      <details
-        className="cm-customized"
-        open={customOpen}
-        onToggle={(event) => setCustomOpen(event.currentTarget.open)}
-      >
-        <summary className="cm-customized-summary">{t("customized")}</summary>
-        <div className="cm-customized-body">
-          {identity}
-          {models}
-          {advanced}
-        </div>
-      </details>
-    </> : <>
-      {identity}
-      {keyField}
-      {models}
-      {advanced}
-    </>}
+    {keyField}
+    <details
+      className="cm-customized"
+      open={customOpen}
+      onToggle={(event) => setCustomOpen(event.currentTarget.open)}
+    >
+      <summary className="cm-customized-summary">{t("customized")}</summary>
+      <div className="cm-customized-body">
+        {identity}
+        {models}
+        {advanced}
+      </div>
+    </details>
     {props.message !== "" ? <p className="cm-error" role="alert">{props.message}</p> : null}
     <div className="cm-editor-actions">
       {props.onReset

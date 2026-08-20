@@ -262,15 +262,6 @@ textarea.cm-input {
   border: 1px dashed var(--dsw-alias-border-l3);
   border-radius: 12px;
 }
-.cm-add-card {
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-  border-radius: 12px;
-  background: var(--dsw-alias-bg-module-platform);
-  padding: 14px 16px;
-}
-.cm-add-card .cm-editor { background: none; padding: 0; }
 .cm-customized {
   border-top: 1px solid var(--dsw-alias-border-l2);
   padding-top: 10px;
