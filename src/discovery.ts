@@ -25,8 +25,9 @@ function label(...candidates: unknown[]): string | undefined {
   return undefined;
 }
 
-export function listingUrl(baseURL: string): string {
-  return baseURL.replace(/\/+$/, "") + "/models";
+export function listingUrl(baseURL: string, api = "openai-completions"): string {
+  const path = api === "ollama" ? "/api/tags" : "/models";
+  return baseURL.replace(/\/+$/, "") + path;
 }
 
 async function readBounded(response: Response, url: string): Promise<string> {
@@ -63,8 +64,31 @@ async function readBounded(response: Response, url: string): Promise<string> {
   return new TextDecoder().decode(body);
 }
 
+/** Read one Ollama `GET /api/tags` reply. */
+export function readOllamaListing(body: unknown): LlmDiscoveredModel[] {
+  const models = body !== null && typeof body === "object" && !Array.isArray(body)
+    ? (body as { models?: unknown }).models
+    : undefined;
+  if (!Array.isArray(models)) {
+    throw new LlmError(
+      'the endpoint\'s Ollama model listing has no "models" array; enter this provider\'s models by hand',
+      "DISCOVERY_FAILED",
+    );
+  }
+  const result: LlmDiscoveredModel[] = [];
+  for (const raw of models) {
+    const entry = raw as Record<string, unknown> | null;
+    const id = label(entry?.model, entry?.name);
+    if (id === undefined) continue;
+    const name = label(entry?.name, entry?.model);
+    result.push({ id, ...(name === undefined ? {} : { name }) });
+  }
+  return result;
+}
+
 /** Read one OpenAI-compatible `GET /models` reply. */
-export function readListing(body: unknown): LlmDiscoveredModel[] {
+export function readListing(body: unknown, api = "openai-completions"): LlmDiscoveredModel[] {
+  if (api === "ollama") return readOllamaListing(body);
   const data = body !== null && typeof body === "object" && !Array.isArray(body)
     ? (body as { data?: unknown }).data
     : undefined;
@@ -125,7 +149,7 @@ export async function discoverModels(
       "DISCOVERY_UNSUPPORTED",
     );
   }
-  const url = listingUrl(request.baseURL);
+  const url = listingUrl(request.baseURL, api);
   const supplied = request.apiKey ?? await storedApiKey?.();
   const apiKey = supplied === undefined ? undefined : usableProbeKey(supplied);
   let response: Response;
@@ -168,5 +192,5 @@ export async function discoverModels(
   } catch (error) {
     throw new LlmError(url + " did not answer with JSON", "DISCOVERY_FAILED", { cause: error });
   }
-  return readListing(body);
+  return readListing(body, api);
 }

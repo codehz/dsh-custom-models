@@ -112,6 +112,12 @@ describe("openai model listing", () => {
     );
   });
 
+  test("uses Ollama's native tags listing path", () => {
+    expect(listingUrl("http://localhost:11434/", "ollama")).toBe(
+      "http://localhost:11434/api/tags",
+    );
+  });
+
   test("reads ids and optional capacities from a standard listing", () => {
     expect(readListing({
       data: [
@@ -128,6 +134,39 @@ describe("openai model listing", () => {
       { id: "plain" },
       { id: "think", name: "Think", contextWindow: 256000, maxTokens: 8192 },
     ]);
+  });
+
+  test("reads model names from an Ollama tags listing", () => {
+    expect(readListing({
+      models: [
+        { name: "llama3.2:latest", model: "llama3.2:latest" },
+        { name: "qwen2.5:7b" },
+        { size: 123 },
+      ],
+    }, "ollama")).toEqual([
+      { id: "llama3.2:latest", name: "llama3.2:latest" },
+      { id: "qwen2.5:7b", name: "qwen2.5:7b" },
+    ]);
+  });
+
+  test("discovers Ollama models through GET /api/tags", async () => {
+    const original = globalThis.fetch;
+    let requestedUrl = "";
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      requestedUrl = String(input);
+      return new Response(JSON.stringify({ models: [{ name: "llama3.2:latest" }] }), { status: 200 });
+    }) as unknown as typeof fetch;
+    try {
+      await expect(discoverModels({
+        api: "ollama",
+        baseURL: "http://localhost:11434/",
+      })).resolves.toEqual([
+        { id: "llama3.2:latest", name: "llama3.2:latest" },
+      ]);
+      expect(requestedUrl).toBe("http://localhost:11434/api/tags");
+    } finally {
+      globalThis.fetch = original;
+    }
   });
 
   test("rejects a reply that is not an OpenAI listing", () => {
