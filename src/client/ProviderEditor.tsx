@@ -234,6 +234,8 @@ export function ProviderEditor(props: ProviderEditorProps) {
       return next;
     });
   };
+  const clearPicked = () => setPicked(new Set());
+  const knownModelIds = new Set(draft.models.map((model) => model.id.trim()).filter(Boolean));
 
   const models = <section className="cm-model-catalog" aria-label={t("models")}>
     <div className="cm-model-list-head">
@@ -284,21 +286,26 @@ export function ProviderEditor(props: ProviderEditorProps) {
       closeLabel={t("close")}
       description={t("fetchDescription")}
       footer={<>
+        <Button type="button" disabled={picked.size === 0} onClick={clearPicked}>{t("clearSelection")}</Button>
         <Button type="button" onClick={closePicker}>{t("cancel")}</Button>
         <Button type="button" variant="primary" onClick={adoptPicked}>{t("fetchAdopt")}</Button>
       </>}
     >
       <ul className="cm-candidate-list">
-        {(candidates ?? []).map((candidate) => <li key={candidate.id} className="cm-candidate">
-          <label className="cm-candidate-label">
-            <input
-              type="checkbox"
-              checked={picked.has(candidate.id)}
-              onChange={() => toggleCandidate(candidate.id)}
-            />
-            <span className="cm-candidate-id">{candidate.id}</span>
-          </label>
-        </li>)}
+        {(candidates ?? []).map((candidate) => {
+          const existing = knownModelIds.has(candidate.id.trim());
+          return <li key={candidate.id} className="cm-candidate">
+            <label className={"cm-candidate-label" + (existing ? " cm-candidate-disabled" : "")}>
+              <input
+                type="checkbox"
+                checked={picked.has(candidate.id)}
+                disabled={existing}
+                onChange={() => toggleCandidate(candidate.id)}
+              />
+              <span className="cm-candidate-id">{candidate.id}</span>
+            </label>
+          </li>;
+        })}
       </ul>
     </Modal>
   </section>;

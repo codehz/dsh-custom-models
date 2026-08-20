@@ -336,6 +336,12 @@ textarea.cm-input {
   cursor: pointer;
 }
 .cm-candidate-label:hover { background: var(--dsw-alias-interactive-bg-hover); }
+.cm-candidate-label.cm-candidate-disabled {
+  color: var(--dsw-alias-label-tertiary);
+  cursor: not-allowed;
+  opacity: .55;
+}
+.cm-candidate-label.cm-candidate-disabled:hover { background: transparent; }
 .cm-candidate-id {
   overflow-wrap: anywhere;
   color: var(--dsw-alias-label-primary);
