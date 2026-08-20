@@ -378,9 +378,11 @@ textarea.cm-input {
   align-items: center;
   gap: 6px;
 }
-.cm-model-entry-drop-target {
-  border-color: var(--dsw-alias-state-business-primary);
-  box-shadow: inset 0 2px 0 var(--dsw-alias-state-business-primary);
+.cm-model-entry-dragging {
+  position: relative;
+  z-index: 1;
+  opacity: .75;
+  box-shadow: 0 8px 20px rgb(0 0 0 / 14%);
 }
 .cm-drag-handle {
   cursor: grab;

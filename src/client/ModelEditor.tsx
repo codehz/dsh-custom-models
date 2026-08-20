@@ -1,4 +1,6 @@
 import React, { useEffect, useState } from "react";
+import { useSortable } from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 import { Pill } from "@deepseek-ai/dsh-client-ui-primitives";
 import type { TranslateNS } from "@deepseek-ai/dsh-client-locale/client";
 import { validationKey } from "./locales.js";
@@ -30,11 +32,6 @@ interface Props {
   onChange: (model: ModelDraft) => void;
   onToggle: () => void;
   onRemove: () => void;
-  onDragStart: () => void;
-  onDragEnd: () => void;
-  onDragOver: (event: React.DragEvent<HTMLDivElement>) => void;
-  onDrop: () => void;
-  dropTarget: boolean;
 }
 
 function Field({
@@ -77,8 +74,8 @@ function IconGrip() {
 
 export function ModelEditor({
   model, index, api, disabled, expanded, errors, t, onChange, onToggle, onRemove,
-  onDragStart, onDragEnd, onDragOver, onDrop, dropTarget,
 }: Props) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: index });
   const path = "models." + index;
   const hasErrors = Object.keys(errors).some((key) => key === path || key.startsWith(path + "."));
   useEffect(() => {
@@ -103,24 +100,19 @@ export function ModelEditor({
     if (overrideErrors.length > 0) setOverrideOpen(true);
   }, [overrideErrors.length]);
   return <div
-    className={"cm-model-entry" + (dropTarget ? " cm-model-entry-drop-target" : "")}
-    onDragOver={onDragOver}
-    onDrop={onDrop}
+    ref={setNodeRef}
+    className={"cm-model-entry" + (isDragging ? " cm-model-entry-dragging" : "")}
+    style={{ transform: CSS.Transform.toString(transform), transition }}
   >
     <div className="cm-model-row">
       <button
         type="button"
         className="cm-icon cm-drag-handle"
-        draggable={!disabled}
         aria-label={t("reorderModel") + " " + (index + 1)}
         title={t("reorderModel")}
         disabled={disabled}
-        onDragStart={(event) => {
-          event.dataTransfer.effectAllowed = "move";
-          event.dataTransfer.setData("text/plain", String(index));
-          onDragStart();
-        }}
-        onDragEnd={onDragEnd}
+        {...attributes}
+        {...listeners}
       >
         <IconGrip />
       </button>

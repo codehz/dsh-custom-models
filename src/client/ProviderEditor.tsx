@@ -1,4 +1,6 @@
 import React, { useEffect, useState } from "react";
+import { closestCenter, DndContext, type DragEndEvent, KeyboardSensor, PointerSensor, useSensor, useSensors } from "@dnd-kit/core";
+import { sortableKeyboardCoordinates, SortableContext, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { Button, Modal } from "@deepseek-ai/dsh-client-ui-primitives";
 import type { CredentialView, DiscoveredModelView, IApiClient } from "@deepseek-ai/dsh-api-remotes/client";
 import type { TranslateNS } from "@deepseek-ai/dsh-client-locale/client";
@@ -79,8 +81,10 @@ export function ProviderEditor(props: ProviderEditorProps) {
   const [customOpen, setCustomOpen] = useState(mode === "create");
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [expandedModels, setExpandedModels] = useState<ReadonlySet<number>>(() => new Set());
-  const [draggedModel, setDraggedModel] = useState<number | null>(null);
-  const [dropTarget, setDropTarget] = useState<number | null>(null);
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  );
   const toggleModel = (index: number) => {
     setExpandedModels((current) => {
       const next = new Set(current);
@@ -113,15 +117,10 @@ export function ProviderEditor(props: ProviderEditorProps) {
       return next;
     });
   };
-  const handleDragOver = (index: number, event: React.DragEvent<HTMLDivElement>) => {
-    event.preventDefault();
-    event.dataTransfer.dropEffect = "move";
-    setDropTarget(index);
-  };
-  const handleDrop = (index: number) => {
-    if (draggedModel !== null) reorderModels(draggedModel, index);
-    setDraggedModel(null);
-    setDropTarget(null);
+  const handleDragEnd = ({ active, over }: DragEndEvent) => {
+    if (over !== null && active.id !== over.id) {
+      reorderModels(Number(active.id), Number(over.id));
+    }
   };
   useEffect(() => {
     if (hasCustomErrors) setCustomOpen(true);
@@ -280,24 +279,23 @@ export function ProviderEditor(props: ProviderEditorProps) {
       </button>
     </div>
     {draft.models.length === 0 ? <p className="cm-model-empty">{t("modelsEmpty")}</p> : null}
-    {draft.models.map((model, index) => <ModelEditor
-      key={(mode === "create" ? "new" : draft.route) + ":" + (model.id || "empty-" + index)}
-      model={model}
-      index={index}
-      api={draft.api}
-      disabled={disabled}
-      expanded={expandedModels.has(index)}
-      errors={validation?.errors ?? {}}
-      t={t}
-      onChange={(next) => props.onChange((value) => { value.models[index] = next; })}
-      onToggle={() => toggleModel(index)}
-      onRemove={() => removeModel(index)}
-      onDragStart={() => setDraggedModel(index)}
-      onDragEnd={() => { setDraggedModel(null); setDropTarget(null); }}
-      onDragOver={(event) => handleDragOver(index, event)}
-      onDrop={() => handleDrop(index)}
-      dropTarget={dropTarget === index && draggedModel !== index}
-    />)}
+    <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+      <SortableContext items={draft.models.map((_, index) => index)} strategy={verticalListSortingStrategy}>
+        {draft.models.map((model, index) => <ModelEditor
+          key={(mode === "create" ? "new" : draft.route) + ":" + (model.id || "empty-" + index)}
+          model={model}
+          index={index}
+          api={draft.api}
+          disabled={disabled}
+          expanded={expandedModels.has(index)}
+          errors={validation?.errors ?? {}}
+          t={t}
+          onChange={(next) => props.onChange((value) => { value.models[index] = next; })}
+          onToggle={() => toggleModel(index)}
+          onRemove={() => removeModel(index)}
+        />)}
+      </SortableContext>
+    </DndContext>
     <button
       type="button"
       className="cm-add-model"
