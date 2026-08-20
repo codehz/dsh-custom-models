@@ -1,6 +1,5 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { Button, Modal } from "@deepseek-ai/dsh-client-ui-primitives";
-import { bindSnapshotSelector } from "@deepseek-ai/dsh-client-web-react";
 import type { IApiClient } from "@deepseek-ai/dsh-api-remotes/client";
 import type { TranslateNS } from "@deepseek-ai/dsh-client-locale/client";
 import { ProviderEditor } from "./ProviderEditor.js";
@@ -34,10 +33,11 @@ function IconPlus() {
   </svg>;
 }
 
-const useSettings = bindSnapshotSelector(settingsStore);
+const subscribeSettings = settingsStore.subscribe.bind(settingsStore);
+const getSettingsSnapshot = settingsStore.getSnapshot.bind(settingsStore);
 
 export function SettingsSection({ api, t }: Props) {
-  const snapshot = useSettings((state) => state);
+  const snapshot = useSyncExternalStore(subscribeSettings, getSettingsSnapshot);
   const [editing, setEditing] = useState<string | "new">();
   const [draft, setDraft] = useState<ProviderDraft>();
   const [secret, setSecret] = useState("");

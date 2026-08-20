@@ -5,7 +5,6 @@ const CLIENT_EXTERNALS = [
   "react/jsx-runtime",
   "@deepseek-ai/dsh-client-runtime/client",
   "@deepseek-ai/dsh-client-ui-primitives",
-  "@deepseek-ai/dsh-client-web-react",
 ] as const;
 
 export default {
